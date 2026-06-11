@@ -53,4 +53,60 @@ jobs:
           git commit -m "herdr-mx $VERSION"
           git push
 
+  bump-herdr-mx-preview:
+    runs-on: ubuntu-latest
+    needs: bump-herdr-mx
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Render herdr-mx-preview formula from the latest mx prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=$(gh release list --repo 2lab-ai/herdr-mx --limit 100 \
+            --json tagName,isPrerelease,createdAt \
+            --jq '[.[] | select(.isPrerelease and (.tagName | startswith("mx-preview-")))] | sort_by(.createdAt) | last | .tagName // empty')
+          if [ -z "$TAG" ]; then
+            echo "no mx-preview prerelease yet"
+            exit 0
+          fi
+          CURRENT=$(sed -n 's|^.*releases/download/\(mx-preview-[^/]*\)/.*$|\1|p' Formula/herdr-mx-preview.rb 2>/dev/null | head -1 || true)
+          if [ "${CURRENT:-}" = "$TAG" ]; then
+            echo "preview formula already at $TAG"
+            exit 0
+          fi
+          CREATED=$(gh release view "$TAG" --repo 2lab-ai/herdr-mx --json createdAt -q .createdAt)
+          VERSION=$(date -u -d "$CREATED" +%Y.%m.%d.%H%M)
+
+          declare -A SHAS
+          for asset in herdr-macos-aarch64 herdr-macos-x86_64 herdr-linux-aarch64 herdr-linux-x86_64; do
+            gh release download "$TAG" --repo 2lab-ai/herdr-mx --pattern "$asset" --output "/tmp/$asset" --clobber
+            SHAS[$asset]=$(sha256sum "/tmp/$asset" | cut -d' ' -f1)
+          done
+
+          sed -e "s/@VERSION@/$VERSION/g" \
+              -e "s/@TAG@/$TAG/g" \
+              -e "s/@SHA_MACOS_AARCH64@/${SHAS[herdr-macos-aarch64]}/" \
+              -e "s/@SHA_MACOS_X86_64@/${SHAS[herdr-macos-x86_64]}/" \
+              -e "s/@SHA_LINUX_AARCH64@/${SHAS[herdr-linux-aarch64]}/" \
+              -e "s/@SHA_LINUX_X86_64@/${SHAS[herdr-linux-x86_64]}/" \
+              Formula/herdr-mx-preview.rb.tmpl > Formula/herdr-mx-preview.rb
+
+          ruby -c Formula/herdr-mx-preview.rb
+
+      - name: Commit preview bump
+        run: |
+          set -euo pipefail
+          git pull --rebase
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/herdr-mx-preview.rb 2>/dev/null || true
+          git diff --cached --quiet && { echo "nothing to commit"; exit 0; }
+          TAG=$(sed -n 's|^.*releases/download/\(mx-preview-[^/]*\)/.*$|\1|p' Formula/herdr-mx-preview.rb | head -1)
+          git commit -m "herdr-mx-preview $TAG"
+          git push
+
 # registered: herdr-mx formula auto-bump
