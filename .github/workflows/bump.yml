@@ -19,7 +19,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG=$(gh release view --repo 2lab-ai/herdr-mx --json tagName -q .tagName)
+          # Latest non-prerelease; herdr-mx is preview-only until a stable
+          # release is cut on request.
+          TAG=$(gh release view --repo 2lab-ai/herdr-mx --json tagName -q .tagName 2>/dev/null || true)
+          if [ -z "$TAG" ]; then
+            echo "no stable release yet; skipping herdr-mx formula"
+            exit 0
+          fi
           VERSION="${TAG#v}"
           CURRENT=$(sed -n 's/^  version "\(.*\)"$/\1/p' Formula/herdr-mx.rb 2>/dev/null || true)
           if [ "${CURRENT:-}" = "$VERSION" ]; then
