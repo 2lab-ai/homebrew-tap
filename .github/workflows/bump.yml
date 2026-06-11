@@ -52,3 +52,5 @@ jobs:
           VERSION=$(sed -n 's/^  version "\(.*\)"$/\1/p' Formula/herdr-mx.rb)
           git commit -m "herdr-mx $VERSION"
           git push
+
+# registered: herdr-mx formula auto-bump
