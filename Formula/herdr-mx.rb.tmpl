@@ -1,0 +1,38 @@
+class HerdrMx < Formula
+  desc "herdr, multiplexed further - multi-remote distribution of herdr"
+  homepage "https://github.com/2lab-ai/herdr-mx"
+  version "@VERSION@"
+  license "AGPL-3.0-or-later"
+
+  conflicts_with "herdr", because: "both install a `herdr` binary"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/2lab-ai/herdr-mx/releases/download/v@VERSION@/herdr-macos-aarch64"
+      sha256 "@SHA_MACOS_AARCH64@"
+    end
+    on_intel do
+      url "https://github.com/2lab-ai/herdr-mx/releases/download/v@VERSION@/herdr-macos-x86_64"
+      sha256 "@SHA_MACOS_X86_64@"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/2lab-ai/herdr-mx/releases/download/v@VERSION@/herdr-linux-aarch64"
+      sha256 "@SHA_LINUX_AARCH64@"
+    end
+    on_intel do
+      url "https://github.com/2lab-ai/herdr-mx/releases/download/v@VERSION@/herdr-linux-x86_64"
+      sha256 "@SHA_LINUX_X86_64@"
+    end
+  end
+
+  def install
+    bin.install Dir["herdr-*"].first => "herdr"
+  end
+
+  test do
+    assert_match "-mx.", shell_output("#{bin}/herdr --version")
+  end
+end
