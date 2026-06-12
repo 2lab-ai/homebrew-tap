@@ -51,6 +51,11 @@ jobs:
       - name: Commit bump
         run: |
           set -euo pipefail
+          # herdr-mx is preview-only until a stable release is cut: with every stable
+          # release deleted the render step skips and the formula file may not exist at
+          # all — that must not fail the job, or the preview bump (needs: this job)
+          # never runs and the preview formula silently goes stale.
+          [ -f Formula/herdr-mx.rb ] || { echo "no stable formula; nothing to commit"; exit 0; }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/herdr-mx.rb
