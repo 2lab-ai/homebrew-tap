@@ -111,13 +111,17 @@ jobs:
       - name: Commit preview bump
         run: |
           set -euo pipefail
-          git pull --rebase
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Commit BEFORE pulling: `git pull --rebase` refuses to run with the freshly
+          # rendered formula sitting unstaged in the tree (this silently broke every
+          # preview bump). Rebase the commit on top of anything the stable job pushed,
+          # then push.
           git add Formula/herdr-mx-preview.rb 2>/dev/null || true
           git diff --cached --quiet && { echo "nothing to commit"; exit 0; }
           TAG=$(sed -n 's|^.*releases/download/\(mx-preview-[^/]*\)/.*$|\1|p' Formula/herdr-mx-preview.rb | head -1)
           git commit -m "herdr-mx-preview $TAG"
+          git pull --rebase
           git push
 
 # registered: herdr-mx formula auto-bump
