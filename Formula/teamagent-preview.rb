@@ -4,7 +4,6 @@ class TeamagentPreview < Formula
   version "2026.06.12.1403"
   license "MIT"
 
-  conflicts_with "teamagent", because: "both install a `teamagent` binary"
 
   on_macos do
     on_arm do
