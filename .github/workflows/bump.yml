@@ -89,8 +89,17 @@ jobs:
             echo "preview formula already at $TAG"
             exit 0
           fi
-          CREATED=$(gh release view "$TAG" --repo 2lab-ai/herdr-mx --json createdAt -q .createdAt)
-          VERSION=$(date -u -d "$CREATED" +%Y.%m.%d.%H%M)
+          # Derive the formula version from the TAG itself: time-stamped preview tags
+          # (mx-preview-YYYY-MM-DD-HHMM-<sha>) carry the same YYYY.MM.DD.HHMM stamp the
+          # binary reports in `herdr status` (`build:`), so brew and status can never
+          # disagree about which build is installed. Legacy tags (no HHMM) fall back to
+          # the release commit time, matching the old behaviour.
+          if [[ "$TAG" =~ ^mx-preview-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{4})-[0-9a-f]+$ ]]; then
+            VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.${BASH_REMATCH[4]}"
+          else
+            CREATED=$(gh release view "$TAG" --repo 2lab-ai/herdr-mx --json createdAt -q .createdAt)
+            VERSION=$(date -u -d "$CREATED" +%Y.%m.%d.%H%M)
+          fi
 
           declare -A SHAS
           for asset in herdr-macos-aarch64 herdr-macos-x86_64 herdr-linux-aarch64 herdr-linux-x86_64; do
