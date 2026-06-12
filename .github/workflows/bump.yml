@@ -133,4 +133,133 @@ jobs:
           git pull --rebase
           git push
 
+# Two jobs to merge into 2lab-ai/homebrew-tap .github/workflows/bump.yml,
+# under `jobs:` alongside bump-herdr-mx / bump-herdr-mx-preview.
+# Same sed-render mechanism as herdr-mx; teamagent preview tags look like
+# preview-YYYY-MM-DD-HHMM-<sha12> and render to brew version YYYY.MM.DD.HHMM.
+
+  bump-teamagent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render teamagent formula from the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Latest non-prerelease; teamagent is preview-only until a stable
+          # release is cut on request.
+          TAG=$(gh release view --repo 2lab-ai/teamagent --json tagName -q .tagName 2>/dev/null || true)
+          if [ -z "$TAG" ]; then
+            echo "no stable release yet; skipping teamagent formula"
+            exit 0
+          fi
+          VERSION="${TAG#v}"
+          CURRENT=$(sed -n 's/^  version "\(.*\)"$/\1/p' Formula/teamagent.rb 2>/dev/null || true)
+          if [ "${CURRENT:-}" = "$VERSION" ]; then
+            echo "formula already at $VERSION"
+            exit 0
+          fi
+
+          declare -A SHAS
+          for asset in teamagent-macos-aarch64 teamagent-macos-x86_64 teamagent-linux-aarch64 teamagent-linux-x86_64; do
+            gh release download "$TAG" --repo 2lab-ai/teamagent --pattern "$asset" --output "/tmp/$asset" --clobber
+            SHAS[$asset]=$(sha256sum "/tmp/$asset" | cut -d' ' -f1)
+          done
+
+          sed -e "s/@VERSION@/$VERSION/g" \
+              -e "s/@SHA_MACOS_AARCH64@/${SHAS[teamagent-macos-aarch64]}/" \
+              -e "s/@SHA_MACOS_X86_64@/${SHAS[teamagent-macos-x86_64]}/" \
+              -e "s/@SHA_LINUX_AARCH64@/${SHAS[teamagent-linux-aarch64]}/" \
+              -e "s/@SHA_LINUX_X86_64@/${SHAS[teamagent-linux-x86_64]}/" \
+              Formula/teamagent.rb.tmpl > Formula/teamagent.rb
+
+          ruby -c Formula/teamagent.rb
+
+      - name: Commit bump
+        run: |
+          set -euo pipefail
+          # teamagent is preview-only until a stable release is cut: with no stable
+          # release the render step skips and the formula file may not exist at
+          # all — that must not fail the job, or the preview bump (needs: this job)
+          # never runs and the preview formula silently goes stale.
+          [ -f Formula/teamagent.rb ] || { echo "no stable formula; nothing to commit"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/teamagent.rb
+          git diff --cached --quiet && { echo "nothing to commit"; exit 0; }
+          VERSION=$(sed -n 's/^  version "\(.*\)"$/\1/p' Formula/teamagent.rb)
+          git commit -m "teamagent $VERSION"
+          git pull --rebase
+          git push
+
+  bump-teamagent-preview:
+    runs-on: ubuntu-latest
+    needs: bump-teamagent
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Render teamagent-preview formula from the latest prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=$(gh release list --repo 2lab-ai/teamagent --limit 100 \
+            --json tagName,isPrerelease,createdAt \
+            --jq '[.[] | select(.isPrerelease and (.tagName | startswith("preview-")))] | sort_by(.createdAt) | last | .tagName // empty')
+          if [ -z "$TAG" ]; then
+            echo "no preview prerelease yet"
+            exit 0
+          fi
+          CURRENT=$(sed -n 's|^.*releases/download/\(preview-[^/]*\)/.*$|\1|p' Formula/teamagent-preview.rb 2>/dev/null | head -1 || true)
+          if [ "${CURRENT:-}" = "$TAG" ]; then
+            echo "preview formula already at $TAG"
+            exit 0
+          fi
+          # Derive the formula version from the TAG itself: time-stamped preview tags
+          # (preview-YYYY-MM-DD-HHMM-<sha>) carry the same stamp the binary reports
+          # in `teamagent --version` (TEAMAGENT_BUILD_ID), so brew and the binary can
+          # never disagree about which build is installed.
+          if [[ "$TAG" =~ ^preview-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{4})-[0-9a-f]+$ ]]; then
+            VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.${BASH_REMATCH[4]}"
+          else
+            CREATED=$(gh release view "$TAG" --repo 2lab-ai/teamagent --json createdAt -q .createdAt)
+            VERSION=$(date -u -d "$CREATED" +%Y.%m.%d.%H%M)
+          fi
+
+          declare -A SHAS
+          for asset in teamagent-macos-aarch64 teamagent-macos-x86_64 teamagent-linux-aarch64 teamagent-linux-x86_64; do
+            gh release download "$TAG" --repo 2lab-ai/teamagent --pattern "$asset" --output "/tmp/$asset" --clobber
+            SHAS[$asset]=$(sha256sum "/tmp/$asset" | cut -d' ' -f1)
+          done
+
+          sed -e "s/@VERSION@/$VERSION/g" \
+              -e "s/@TAG@/$TAG/g" \
+              -e "s/@SHA_MACOS_AARCH64@/${SHAS[teamagent-macos-aarch64]}/" \
+              -e "s/@SHA_MACOS_X86_64@/${SHAS[teamagent-macos-x86_64]}/" \
+              -e "s/@SHA_LINUX_AARCH64@/${SHAS[teamagent-linux-aarch64]}/" \
+              -e "s/@SHA_LINUX_X86_64@/${SHAS[teamagent-linux-x86_64]}/" \
+              Formula/teamagent-preview.rb.tmpl > Formula/teamagent-preview.rb
+
+          ruby -c Formula/teamagent-preview.rb
+
+      - name: Commit preview bump
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Commit BEFORE pulling: `git pull --rebase` refuses to run with the freshly
+          # rendered formula sitting unstaged in the tree. Rebase the commit on top of
+          # anything the stable job pushed, then push.
+          git add Formula/teamagent-preview.rb 2>/dev/null || true
+          git diff --cached --quiet && { echo "nothing to commit"; exit 0; }
+          TAG=$(sed -n 's|^.*releases/download/\(preview-[^/]*\)/.*$|\1|p' Formula/teamagent-preview.rb | head -1)
+          git commit -m "teamagent-preview $TAG"
+          git pull --rebase
+          git push
+
 # registered: herdr-mx formula auto-bump
+# registered: teamagent formula auto-bump

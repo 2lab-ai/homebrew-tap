@@ -1,0 +1,38 @@
+class Teamagent < Formula
+  desc "Multi-account multi-provider LLM proxy for Claude Code with quota-maximizing scheduling"
+  homepage "https://github.com/2lab-ai/teamagent"
+  version "@VERSION@"
+  license "MIT"
+
+  conflicts_with "teamagent-preview", because: "both install a `teamagent` binary"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/2lab-ai/teamagent/releases/download/v@VERSION@/teamagent-macos-aarch64"
+      sha256 "@SHA_MACOS_AARCH64@"
+    end
+    on_intel do
+      url "https://github.com/2lab-ai/teamagent/releases/download/v@VERSION@/teamagent-macos-x86_64"
+      sha256 "@SHA_MACOS_X86_64@"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/2lab-ai/teamagent/releases/download/v@VERSION@/teamagent-linux-aarch64"
+      sha256 "@SHA_LINUX_AARCH64@"
+    end
+    on_intel do
+      url "https://github.com/2lab-ai/teamagent/releases/download/v@VERSION@/teamagent-linux-x86_64"
+      sha256 "@SHA_LINUX_X86_64@"
+    end
+  end
+
+  def install
+    bin.install Dir["teamagent-*"].first => "teamagent"
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/teamagent --version")
+  end
+end
