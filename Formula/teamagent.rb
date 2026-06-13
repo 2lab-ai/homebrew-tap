@@ -4,8 +4,6 @@ class Teamagent < Formula
   version "0.1.0"
   license "MIT"
 
-  conflicts_with "teamagent-preview", because: "both install a `teamagent` binary"
-
   on_macos do
     on_arm do
       url "https://github.com/2lab-ai/teamagent/releases/download/v0.1.0/teamagent-macos-aarch64"
@@ -27,6 +25,8 @@ class Teamagent < Formula
       sha256 "6fd663c0c6a8349e037e4cc3d8ff1290e73ddfbf62dc216a101f8d8ff5d2c757"
     end
   end
+
+  link_overwrite "bin/teamagent"
 
   def install
     bin.install Dir["teamagent-*"].first => "teamagent"
