@@ -1,28 +1,28 @@
 class TeamagentPreview < Formula
   desc "Multi-account multi-provider LLM proxy for Claude Code with quota-maximizing scheduling"
   homepage "https://github.com/2lab-ai/teamagent"
-  version "2026.06.13.0818"
+  version "2026.06.13.1120"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "https://github.com/2lab-ai/teamagent/releases/download/preview-2026-06-13-0818-6043a888d2e8/teamagent-macos-aarch64"
-      sha256 "0c317d789116598589c9d3e6cd98b5e6e167eb981c6253f5e2d2f32696847519"
+      url "https://github.com/2lab-ai/teamagent/releases/download/preview-2026-06-13-1120-909bc6e0f1ac/teamagent-macos-aarch64"
+      sha256 "4e05e9ace7e2c09673045f171fb70d920cbda80406d1f88506d1c50577181fb4"
     end
     on_intel do
-      url "https://github.com/2lab-ai/teamagent/releases/download/preview-2026-06-13-0818-6043a888d2e8/teamagent-macos-x86_64"
-      sha256 "e7802d82762fcd5c7dc7d2e652adbb4408f4fde28b336c859bb843057ee6440f"
+      url "https://github.com/2lab-ai/teamagent/releases/download/preview-2026-06-13-1120-909bc6e0f1ac/teamagent-macos-x86_64"
+      sha256 "bbb45f539ed610c454d7f15e97e1443b2df7d94094be7fb5e3a58d728e83da05"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/2lab-ai/teamagent/releases/download/preview-2026-06-13-0818-6043a888d2e8/teamagent-linux-aarch64"
-      sha256 "b43f97cac35cde0afe273c3a1833f668e2cd9ce5cd38f4b9ae1fb4ae664e1f26"
+      url "https://github.com/2lab-ai/teamagent/releases/download/preview-2026-06-13-1120-909bc6e0f1ac/teamagent-linux-aarch64"
+      sha256 "d7134babf7ee22e1e1f1906b9492625a9d41e60860cb6bf08fe5cd8b14241b33"
     end
     on_intel do
-      url "https://github.com/2lab-ai/teamagent/releases/download/preview-2026-06-13-0818-6043a888d2e8/teamagent-linux-x86_64"
-      sha256 "2ecc74c5e41a03c7e5c1a4cff278010dd56ff8e9c81326e3f8cbcff37a50ad1c"
+      url "https://github.com/2lab-ai/teamagent/releases/download/preview-2026-06-13-1120-909bc6e0f1ac/teamagent-linux-x86_64"
+      sha256 "5cc63a14cf011197e7252d3f1fb83763e6939f101ef218c1026915171ff84ace"
     end
   end
 
