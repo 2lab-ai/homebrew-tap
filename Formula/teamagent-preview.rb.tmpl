@@ -4,7 +4,6 @@ class TeamagentPreview < Formula
   version "@VERSION@"
   license "MIT"
 
-
   on_macos do
     on_arm do
       url "https://github.com/2lab-ai/teamagent/releases/download/@TAG@/teamagent-macos-aarch64"
@@ -26,6 +25,8 @@ class TeamagentPreview < Formula
       sha256 "@SHA_LINUX_X86_64@"
     end
   end
+
+  link_overwrite "bin/teamagent"
 
   def install
     bin.install Dir["teamagent-*"].first => "teamagent"
