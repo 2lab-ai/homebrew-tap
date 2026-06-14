@@ -4,6 +4,9 @@ class Teamagent < Formula
   version "0.2.1"
   license "MIT"
 
+  # teamagent was renamed to llmux (https://github.com/2lab-ai/llmux).
+  disable! date: "2026-06-14", because: "it was renamed; install 2lab-ai/tap/llmux instead"
+
   on_macos do
     on_arm do
       url "https://github.com/2lab-ai/teamagent/releases/download/v0.2.1/teamagent-macos-aarch64"
