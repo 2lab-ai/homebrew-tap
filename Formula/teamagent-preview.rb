@@ -1,28 +1,28 @@
 class TeamagentPreview < Formula
   desc "Multi-account multi-provider LLM proxy for Claude Code with quota-maximizing scheduling"
   homepage "https://github.com/2lab-ai/teamagent"
-  version "2026.06.13.2347"
+  version "2026.06.14.0303"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "https://github.com/2lab-ai/teamagent/releases/download/preview-2026-06-13-2347-8ad107e67366/teamagent-macos-aarch64"
-      sha256 "0b02a276f724ed7e769c97e02249e0fa9f03091dd0b61bd548f58722dd54c49c"
+      url "https://github.com/2lab-ai/teamagent/releases/download/preview-2026-06-14-0303-3d393b0376cc/teamagent-macos-aarch64"
+      sha256 "7479042354b10799b9962e30586d425b158570359c81bfd3f6cc32e73e28fee3"
     end
     on_intel do
-      url "https://github.com/2lab-ai/teamagent/releases/download/preview-2026-06-13-2347-8ad107e67366/teamagent-macos-x86_64"
-      sha256 "7d1aea873b4541d28e9a85619c2e66dc296ddae7bc4548499c94dfcb939a4f93"
+      url "https://github.com/2lab-ai/teamagent/releases/download/preview-2026-06-14-0303-3d393b0376cc/teamagent-macos-x86_64"
+      sha256 "11833f1388bfa4b564a5ac6030401ac0200d4e9c5786478660353727d1c8e59d"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/2lab-ai/teamagent/releases/download/preview-2026-06-13-2347-8ad107e67366/teamagent-linux-aarch64"
-      sha256 "1e72bd988af2a436182423bc473e90cf32025f05dffc29ba9042937d1e3dcb2c"
+      url "https://github.com/2lab-ai/teamagent/releases/download/preview-2026-06-14-0303-3d393b0376cc/teamagent-linux-aarch64"
+      sha256 "a0bb8790921e793d8675208b774e4b5184937eab23436fa90ebd4959d8d87c16"
     end
     on_intel do
-      url "https://github.com/2lab-ai/teamagent/releases/download/preview-2026-06-13-2347-8ad107e67366/teamagent-linux-x86_64"
-      sha256 "fa22881ce3bc573cfb75a0ee94a7beb52b960d18772cdfcf4ec8f0e9b9daaecb"
+      url "https://github.com/2lab-ai/teamagent/releases/download/preview-2026-06-14-0303-3d393b0376cc/teamagent-linux-x86_64"
+      sha256 "25a1d1beeeec3bec97a8309e1c47aa7184629e1aa18fcd9ae0674f1f4eb125c5"
     end
   end
 
