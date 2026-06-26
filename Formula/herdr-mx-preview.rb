@@ -1,7 +1,7 @@
 class HerdrMxPreview < Formula
   desc "herdr-mx preview channel - latest mx-branch build (prerelease)"
   homepage "https://github.com/2lab-ai/herdr-mx"
-  version "2026.06.12.1559"
+  version "2026.06.26.0158"
   license "AGPL-3.0-or-later"
 
   conflicts_with "herdr", because: "both install a `herdr` binary"
@@ -9,23 +9,23 @@ class HerdrMxPreview < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/2lab-ai/herdr-mx/releases/download/mx-preview-2026-06-12-1559-2df71bfa1968/herdr-macos-aarch64"
-      sha256 "c9c04aeef5ef457474597e6c050b07d4eaa0fdc6b3859f65fe91ecdaa1f7e8e6"
+      url "https://github.com/2lab-ai/herdr-mx/releases/download/mx-preview-2026-06-26-0158-8a93d7e7a328/herdr-macos-aarch64"
+      sha256 "4b02674bede6962a6ea3b0f94e518be94afb47858cab933bc102db381c3b91af"
     end
     on_intel do
-      url "https://github.com/2lab-ai/herdr-mx/releases/download/mx-preview-2026-06-12-1559-2df71bfa1968/herdr-macos-x86_64"
-      sha256 "a989a4f9004c02bff081ddd1fd538669795f6962e77958036ea97758c09b0b0c"
+      url "https://github.com/2lab-ai/herdr-mx/releases/download/mx-preview-2026-06-26-0158-8a93d7e7a328/herdr-macos-x86_64"
+      sha256 "51969d6befcd5d81b1a8290807e2b6d8973a566931b1a9513a3c28af6c8cd1c9"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/2lab-ai/herdr-mx/releases/download/mx-preview-2026-06-12-1559-2df71bfa1968/herdr-linux-aarch64"
-      sha256 "1adadff57a3bee5451a10b116942a5433e61bcfa78ec5af852050ca8d37be617"
+      url "https://github.com/2lab-ai/herdr-mx/releases/download/mx-preview-2026-06-26-0158-8a93d7e7a328/herdr-linux-aarch64"
+      sha256 "f90f11250f1e86d1e2b5639bc71a7d1e6c35d596efdb8f387fcb8068838c52cc"
     end
     on_intel do
-      url "https://github.com/2lab-ai/herdr-mx/releases/download/mx-preview-2026-06-12-1559-2df71bfa1968/herdr-linux-x86_64"
-      sha256 "9156fad20026e12d6d4f4167faa69897d0b668471fda56f0a0010d39a2239e31"
+      url "https://github.com/2lab-ai/herdr-mx/releases/download/mx-preview-2026-06-26-0158-8a93d7e7a328/herdr-linux-x86_64"
+      sha256 "863244dc433127af978fe26dc863d0aa2bc4839fdc8f2d3e30b6f3c5793d0c58"
     end
   end
 
