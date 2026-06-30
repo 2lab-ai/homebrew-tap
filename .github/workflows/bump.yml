@@ -245,5 +245,57 @@ jobs:
           git pull --rebase
           git push
 
+  bump-llmux-islands:
+    runs-on: ubuntu-latest
+    needs: bump-llmux
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Render llmux-islands cask from the latest stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The islands app rides the llmux stable release: the v* release that
+          # ships the CLI binaries also carries LlmuxIslands-<version>.zip.
+          TAG=$(gh release view --repo 2lab-ai/llmux --json tagName -q .tagName 2>/dev/null || true)
+          if [ -z "$TAG" ]; then
+            echo "no stable release yet; skipping llmux-islands cask"
+            exit 0
+          fi
+          VERSION="${TAG#v}"
+          CURRENT=$(sed -n 's/^  version "\(.*\)"$/\1/p' Casks/llmux-islands.rb 2>/dev/null || true)
+          if [ "${CURRENT:-}" = "$VERSION" ]; then
+            echo "cask already at $VERSION"
+            exit 0
+          fi
+          ASSET="LlmuxIslands-${VERSION}.zip"
+          if ! gh release download "$TAG" --repo 2lab-ai/llmux --pattern "$ASSET" --output "/tmp/$ASSET" --clobber; then
+            echo "release $TAG has no $ASSET yet; skipping cask bump"
+            exit 0
+          fi
+          SHA=$(sha256sum "/tmp/$ASSET" | cut -d' ' -f1)
+          sed -e "s/@VERSION@/$VERSION/g" \
+              -e "s/@SHA@/$SHA/" \
+              Casks/llmux-islands.rb.tmpl > Casks/llmux-islands.rb
+
+          ruby -c Casks/llmux-islands.rb
+
+      - name: Commit bump
+        run: |
+          set -euo pipefail
+          [ -f Casks/llmux-islands.rb ] || { echo "no cask; nothing to commit"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/llmux-islands.rb
+          git diff --cached --quiet && { echo "nothing to commit"; exit 0; }
+          VERSION=$(sed -n 's/^  version "\(.*\)"$/\1/p' Casks/llmux-islands.rb)
+          git commit -m "llmux-islands $VERSION"
+          git pull --rebase
+          git push
+
 # registered: herdr-mx formula auto-bump
 # registered: llmux formula auto-bump (preview; stable added when a v* release exists)
+# registered: llmux-islands cask auto-bump (rides the llmux stable release)
