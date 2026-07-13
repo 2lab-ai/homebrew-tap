@@ -1,8 +1,8 @@
 cask "llmux-islands-preview" do
-  version "2026.07.13.1253"
-  sha256 "7f2af8bd96c9960b35d6bd48362aadc44e82c6ad74288ed6b5d173b5c4d6c974"
+  version "2026.07.13.2226"
+  sha256 "a62d6f526a399c8eedbfb72addc04bd86d2e8f80bdace0768de4fdd2cf18fd6c"
 
-  url "https://github.com/2lab-ai/llmux/releases/download/preview-2026-07-13-1253-2131ccc15355/LlmuxIslands-#{version}.zip"
+  url "https://github.com/2lab-ai/llmux/releases/download/preview-2026-07-13-2226-90860396997f/LlmuxIslands-#{version}.zip"
   name "llmux islands (preview)"
   desc "Preview build of the menu-bar app for viewing llmux account usage"
   homepage "https://github.com/2lab-ai/llmux"
