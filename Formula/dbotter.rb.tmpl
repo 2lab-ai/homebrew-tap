@@ -1,0 +1,39 @@
+class Dbotter < Formula
+  desc "Local Rust database client for MySQL and Redis"
+  homepage "https://github.com/2lab-ai/dbotter"
+  version "@VERSION@"
+  license "Apache-2.0"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/2lab-ai/dbotter/releases/download/v@VERSION@/dbotter-macos-aarch64"
+      sha256 "@SHA_MACOS_AARCH64@"
+    end
+    on_intel do
+      url "https://github.com/2lab-ai/dbotter/releases/download/v@VERSION@/dbotter-macos-x86_64"
+      sha256 "@SHA_MACOS_X86_64@"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/2lab-ai/dbotter/releases/download/v@VERSION@/dbotter-linux-aarch64"
+      sha256 "@SHA_LINUX_AARCH64@"
+    end
+    on_intel do
+      url "https://github.com/2lab-ai/dbotter/releases/download/v@VERSION@/dbotter-linux-x86_64"
+      sha256 "@SHA_LINUX_X86_64@"
+    end
+  end
+
+  link_overwrite "bin/dbotter"
+
+  def install
+    bin.install Dir["dbotter-*"].first => "dbotter"
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/dbotter --version")
+    shell_output("#{bin}/dbotter drivers")
+  end
+end
