@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import hashlib
 import json
 import os
@@ -78,6 +79,15 @@ class ContractError(ValueError):
     """Raised when release input cannot safely render a formula."""
 
 
+def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ContractError(f"duplicate JSON object key: {key}")
+        value[key] = item
+    return value
+
+
 def exact_object(value: Any, keys: set[str], label: str) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != keys:
         raise ContractError(f"{label} fields are not exact")
@@ -135,6 +145,10 @@ def validate(
     expected_created_at = (
         f"{year}-{month}-{day}T{clock[0:2]}:{clock[2:4]}:{clock[4:6]}Z"
     )
+    try:
+        dt.datetime.strptime(expected_created_at, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError as error:
+        raise ContractError("tag does not contain a real UTC timestamp") from error
     if manifest["created_at"] != expected_created_at:
         raise ContractError("manifest creation time does not match tag")
     if manifest["config_contract"] != {
@@ -252,7 +266,7 @@ def main() -> int:
         if hashlib.sha256(manifest_bytes).hexdigest() != args.manifest_sha256:
             raise ContractError("manifest SHA-256 does not match dispatch")
         try:
-            document = json.loads(manifest_bytes)
+            document = json.loads(manifest_bytes, object_pairs_hook=unique_object)
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise ContractError("manifest is not valid UTF-8 JSON") from error
         artifacts = validate(
