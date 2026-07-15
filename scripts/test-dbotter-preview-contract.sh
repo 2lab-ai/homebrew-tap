@@ -4,6 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 fixture="$root/tests/fixtures/dbotter-preview-manifest.json"
 renderer="$root/scripts/render-dbotter-preview-formula.py"
+preflight="$root/scripts/verify-dbotter-preview-assets.py"
 workflow="$root/.github/workflows/bump.yml"
 template="$root/Formula/dbotter-preview.rb.tmpl"
 
@@ -13,6 +14,7 @@ fail() {
 }
 
 [[ -x "$renderer" ]] || fail "tracked executable renderer is missing"
+[[ -x "$preflight" ]] || fail "tracked executable asset preflight is missing"
 for input in tag source_sha version manifest_url manifest_sha256; do
   grep -Eq "^[[:space:]]{6}${input}:$" "$workflow" \
     || fail "workflow_dispatch input is missing: $input"
@@ -34,10 +36,14 @@ document.fetch("jobs").each do |name, candidate|
 end
 runs = job.fetch("steps").map { |step| step["run"] }.compact.join("\n")
 raise "renderer is not invoked" unless runs.include?("scripts/render-dbotter-preview-formula.py")
+raise "asset preflight is not invoked" unless runs.include?("scripts/verify-dbotter-preview-assets.py")
+raise "all manifest assets are not downloaded" unless runs.include?(".artifacts[]") && runs.include?("curl --fail")
+raise "candidate verification does not precede formula rendering" unless runs.index("scripts/verify-dbotter-preview-assets.py") < runs.index("scripts/render-dbotter-preview-formula.py")
 raise "tap does not independently enforce monotonic version" unless runs.include?("--greater-than")
 raise "latest release discovery remains" if runs.include?("gh release list")
 raise "legacy raw asset remains" if runs.include?("dbotter-macos-aarch64")
 raise "tap evidence does not bind formula commit" unless runs.include?("dbotter.tap-dispatch.v1") && runs.include?("formula_commit")
+raise "tap evidence omits measured preflight" unless runs.include?("--slurpfile preflight") && runs.include?("preflight: $preflight[0]")
 uploads = job.fetch("steps").select { |step| step["uses"] == "actions/upload-artifact@v4" }
 raise "tap evidence artifact is not uploaded exactly once" unless uploads.length == 1
 RUBY
