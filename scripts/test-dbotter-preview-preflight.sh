@@ -3,6 +3,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 verifier="$root/scripts/verify-dbotter-preview-assets.py"
+trusted_validator="$root/scripts/validate-dbotter-preview-preflight.py"
 
 fail() {
   echo "dbotter preview preflight contract: $*" >&2
@@ -10,6 +11,7 @@ fail() {
 }
 
 [[ -x "$verifier" ]] || fail "tracked executable verifier is missing"
+[[ -x "$trusted_validator" ]] || fail "tracked executable trusted validator is missing"
 
 temporary="$(mktemp -d "${TMPDIR:-/tmp}/dbotter-preview-preflight.XXXXXX")"
 trap 'rm -rf "$temporary"' EXIT HUP INT TERM
@@ -95,7 +97,22 @@ jq -n --slurpfile artifacts "$artifact_json" '
 ' >"$manifest"
 
 receipt="$temporary/preflight.json"
-"$verifier" --manifest "$manifest" --assets-dir "$assets" --output "$receipt"
+GH_TOKEN=preflight-contract-sentinel \
+GITHUB_TOKEN=preflight-contract-sentinel \
+ACTIONS_RUNTIME_TOKEN=preflight-contract-sentinel \
+  "$verifier" --manifest "$manifest" --assets-dir "$assets" --output "$receipt"
+manifest_sha256="$(shasum -a 256 "$manifest" | awk '{print $1}')"
+validate_proof=(
+  "$trusted_validator"
+  --manifest "$manifest"
+  --proof "$receipt"
+  --expected-tag preview-2026-07-15-123456-123456789-2-0123456789ab
+  --expected-source-sha 0123456789abcdef0123456789abcdef01234567
+  --expected-version 2026.07.15.123456.123456789.2
+  --expected-manifest-url https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-15-123456-123456789-2-0123456789ab/preview-manifest.json
+  --expected-manifest-sha256 "$manifest_sha256"
+)
+"${validate_proof[@]}" >/dev/null
 
 jq -e '
   (keys | sort) == ["artifacts", "candidate", "schema"]
@@ -157,6 +174,57 @@ for typed_manifest in \
     --output "$temporary/$typed_name-receipt.json" >/dev/null 2>&1; then
     fail "verifier accepted a type-confused manifest config: $typed_name"
   fi
+  typed_sha256="$(shasum -a 256 "$typed_manifest" | awk '{print $1}')"
+  if "$trusted_validator" \
+    --manifest "$typed_manifest" \
+    --proof "$receipt" \
+    --expected-tag preview-2026-07-15-123456-123456789-2-0123456789ab \
+    --expected-source-sha 0123456789abcdef0123456789abcdef01234567 \
+    --expected-version 2026.07.15.123456.123456789.2 \
+    --expected-manifest-url https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-15-123456-123456789-2-0123456789ab/preview-manifest.json \
+    --expected-manifest-sha256 "$typed_sha256" >/dev/null 2>&1; then
+    fail "trusted validator accepted a type-confused manifest config: $typed_name"
+  fi
+done
+
+python3 - "$receipt" "$temporary" <<'PY'
+import copy
+import json
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1])
+destination = pathlib.Path(sys.argv[2])
+document = json.loads(source.read_text(encoding="utf-8"))
+cases = {}
+candidate = copy.deepcopy(document)
+candidate["candidate"]["config_contract"]["read_versions"][0] = True
+cases["proof-config-bool.json"] = candidate
+candidate = copy.deepcopy(document)
+candidate["candidate"]["config_contract"]["write_version"] = 2.0
+cases["proof-config-float.json"] = candidate
+candidate = copy.deepcopy(document)
+candidate["artifacts"][0]["bytes"] += 1
+cases["proof-measurement-mismatch.json"] = candidate
+candidate = copy.deepcopy(document)
+candidate["candidate"]["identity"]["channel"] = "dev"
+cases["proof-identity-mismatch.json"] = candidate
+candidate = copy.deepcopy(document)
+candidate["extra"] = 1
+cases["proof-extra-field.json"] = candidate
+for filename, candidate in cases.items():
+    (destination / filename).write_text(
+        json.dumps(candidate, indent=2) + "\n", encoding="utf-8"
+    )
+PY
+
+for invalid_proof in "$temporary"/proof-*.json; do
+  invalid_name="$(basename "$invalid_proof")"
+  invalid_command=("${validate_proof[@]}")
+  invalid_command[4]="$invalid_proof"
+  if "${invalid_command[@]}" >/dev/null 2>&1; then
+    fail "trusted validator accepted invalid proof: $invalid_name"
+  fi
 done
 
 cp "$manifest" "$temporary/tampered-manifest.json"
@@ -186,7 +254,7 @@ if "$verifier" \
   >"$temporary/bad-contract.stdout" 2>"$temporary/bad-contract.stderr"; then
   fail "verifier accepted a candidate with a mismatched config contract"
 fi
-grep -Fq 'candidate config contract disagrees with manifest' \
+grep -Fq 'candidate config contract write_version is not the exact integer' \
   "$temporary/bad-contract.stderr" \
   || fail "mismatched config contract was not rejected at candidate execution"
 apply_fake_candidate 1 2

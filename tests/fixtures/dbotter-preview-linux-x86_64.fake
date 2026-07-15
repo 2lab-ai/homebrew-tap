@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -n "${GH_TOKEN:-}" || -n "${GITHUB_TOKEN:-}" || -n "${ACTIONS_RUNTIME_TOKEN:-}" ]]; then
+  exit 70
+fi
+
 case "$*" in
   "version --format json")
     printf '%s\n' '{"package_version":"0.1.0","channel":"preview","build_id":"2026-07-15-123456-123456789-2-0123456789ab","source_sha":"0123456789abcdef0123456789abcdef01234567","target":"x86_64-unknown-linux-gnu","arch":"x86_64"}'

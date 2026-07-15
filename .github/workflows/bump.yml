@@ -445,15 +445,111 @@ jobs:
           git pull --rebase
           git push
 
+  preflight-dbotter-preview:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          persist-credentials: false
+
+      - name: Download exact immutable preview inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DBOTTER_TAG: ${{ inputs.tag }}
+          DBOTTER_SOURCE_SHA: ${{ inputs.source_sha }}
+          DBOTTER_VERSION: ${{ inputs.version }}
+          DBOTTER_MANIFEST_URL: ${{ inputs.manifest_url }}
+          DBOTTER_MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$DBOTTER_TAG" =~ ^preview-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{6})-([1-9][0-9]*)-([1-9][0-9]*)-([0-9a-f]{12})$ ]]
+          tag_year="${BASH_REMATCH[1]}"
+          tag_month="${BASH_REMATCH[2]}"
+          tag_day="${BASH_REMATCH[3]}"
+          tag_clock="${BASH_REMATCH[4]}"
+          tag_run_id="${BASH_REMATCH[5]}"
+          tag_run_attempt="${BASH_REMATCH[6]}"
+          tag_sha12="${BASH_REMATCH[7]}"
+          [[ "$DBOTTER_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$tag_sha12" == "${DBOTTER_SOURCE_SHA:0:12}" ]]
+          expected_version="$tag_year.$tag_month.$tag_day.$tag_clock.$tag_run_id.$tag_run_attempt"
+          [[ "$DBOTTER_VERSION" == "$expected_version" ]]
+          expected_manifest_url="https://github.com/2lab-ai/dbotter/releases/download/$DBOTTER_TAG/preview-manifest.json"
+          [[ "$DBOTTER_MANIFEST_URL" == "$expected_manifest_url" ]]
+          [[ "$DBOTTER_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+
+          ref=$(gh api "repos/2lab-ai/dbotter/git/ref/tags/$DBOTTER_TAG")
+          [[ "$(jq -r '.object.type' <<<"$ref")" == "commit" ]]
+          [[ "$(jq -r '.object.sha' <<<"$ref")" == "$DBOTTER_SOURCE_SHA" ]]
+          release=$(gh release view "$DBOTTER_TAG" --repo 2lab-ai/dbotter \
+            --json tagName,isPrerelease)
+          [[ "$(jq -r '.tagName' <<<"$release")" == "$DBOTTER_TAG" ]]
+          [[ "$(jq -r '.isPrerelease' <<<"$release")" == "true" ]]
+
+          mkdir -p dbotter-preflight-input/assets
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            "$DBOTTER_MANIFEST_URL" \
+            --output dbotter-preflight-input/preview-manifest.json
+          actual_manifest_sha256=$(sha256sum \
+            dbotter-preflight-input/preview-manifest.json | awk '{print $1}')
+          [[ "$actual_manifest_sha256" == "$DBOTTER_MANIFEST_SHA256" ]]
+          for asset in \
+            dbotter-preview-aarch64.tar.gz \
+            dbotter-preview-x86_64.tar.gz \
+            dbotter-preview-linux-aarch64 \
+            dbotter-preview-linux-x86_64; do
+            curl --fail --location --proto '=https' --tlsv1.2 \
+              "https://github.com/2lab-ai/dbotter/releases/download/$DBOTTER_TAG/$asset" \
+              --output "dbotter-preflight-input/assets/$asset"
+          done
+          chmod 0755 dbotter-preflight-input/assets/dbotter-preview-linux-x86_64
+
+      - name: Execute measured candidate without repository credentials
+        run: |
+          set -euo pipefail
+          candidate_home=$(mktemp -d)
+          trap 'rm -rf "$candidate_home"' EXIT HUP INT TERM
+          env -i \
+            HOME="$candidate_home" \
+            PATH=/usr/bin:/bin \
+            LANG=C \
+            LC_ALL=C \
+            TZ=UTC \
+            /usr/bin/python3 scripts/verify-dbotter-preview-assets.py \
+            --manifest dbotter-preflight-input/preview-manifest.json \
+            --assets-dir dbotter-preflight-input/assets \
+            --output dbotter-tap-preflight.json
+
+      - name: Upload unprivileged measured preflight
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbotter-preflight-${{ inputs.tag }}
+          path: dbotter-tap-preflight.json
+          if-no-files-found: error
+          retention-days: 1
+
   bump-dbotter-preview:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    needs: preflight-dbotter-preview
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           ref: master
 
-      - name: Verify exact release identity and render dbotter-preview app formula
+      - name: Download measured preflight proof
+        uses: actions/download-artifact@v4
+        with:
+          name: dbotter-preflight-${{ inputs.tag }}
+          path: preflight
+
+      - name: Revalidate proof and render dbotter-preview app formula
         env:
           GH_TOKEN: ${{ github.token }}
           DBOTTER_TAG: ${{ inputs.tag }}
@@ -493,25 +589,14 @@ jobs:
             "$DBOTTER_MANIFEST_URL" --output "$temporary/preview-manifest.json"
           actual_manifest_sha256=$(sha256sum "$temporary/preview-manifest.json" | awk '{print $1}')
           [[ "$actual_manifest_sha256" == "$DBOTTER_MANIFEST_SHA256" ]]
-          jq -e '
-            (.artifacts | length) == 4
-            and ([.artifacts[].target] | unique | length) == 4
-          ' "$temporary/preview-manifest.json" >/dev/null
-          mkdir "$temporary/assets"
-          for asset in \
-            dbotter-preview-aarch64.tar.gz \
-            dbotter-preview-x86_64.tar.gz \
-            dbotter-preview-linux-aarch64 \
-            dbotter-preview-linux-x86_64; do
-            curl --fail --location --proto '=https' --tlsv1.2 \
-              "https://github.com/2lab-ai/dbotter/releases/download/$DBOTTER_TAG/$asset" \
-              --output "$temporary/assets/$asset"
-          done
-          chmod 0755 "$temporary/assets/dbotter-preview-linux-x86_64"
-          scripts/verify-dbotter-preview-assets.py \
+          scripts/validate-dbotter-preview-preflight.py \
             --manifest "$temporary/preview-manifest.json" \
-            --assets-dir "$temporary/assets" \
-            --output dbotter-tap-preflight.json
+            --proof preflight/dbotter-tap-preflight.json \
+            --expected-tag "$DBOTTER_TAG" \
+            --expected-source-sha "$DBOTTER_SOURCE_SHA" \
+            --expected-version "$DBOTTER_VERSION" \
+            --expected-manifest-url "$DBOTTER_MANIFEST_URL" \
+            --expected-manifest-sha256 "$DBOTTER_MANIFEST_SHA256"
           current_version=$(sed -n 's/^[[:space:]]*version "\([0-9.]*\)".*/\1/p' \
             Formula/dbotter-preview.rb | head -1)
           [[ -n "$current_version" ]]
@@ -576,7 +661,7 @@ jobs:
           formula_blob=$(git rev-parse "$FORMULA_COMMIT:Formula/dbotter-preview.rb")
           formula_sha256=$(sha256sum Formula/dbotter-preview.rb | awk '{print $1}')
           jq -n \
-            --slurpfile preflight dbotter-tap-preflight.json \
+            --slurpfile preflight preflight/dbotter-tap-preflight.json \
             --arg tag "$DBOTTER_TAG" \
             --arg source_sha "$DBOTTER_SOURCE_SHA" \
             --arg version "$DBOTTER_VERSION" \

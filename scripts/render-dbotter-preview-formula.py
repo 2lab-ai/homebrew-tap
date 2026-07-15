@@ -36,6 +36,7 @@ TOP_LEVEL_KEYS = {
     "created_at",
     "artifacts",
 }
+CONFIG_KEYS = {"read_versions", "write_version", "migration_backup_suffix"}
 COMMON_ARTIFACT_KEYS = {
     "target",
     "arch",
@@ -96,6 +97,26 @@ def exact_object(value: Any, keys: set[str], label: str) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != keys:
         raise ContractError(f"{label} fields are not exact")
     return value
+
+
+def exact_config_contract(value: Any, label: str) -> dict[str, Any]:
+    config = exact_object(value, CONFIG_KEYS, label)
+    read_versions = config["read_versions"]
+    if (
+        not isinstance(read_versions, list)
+        or len(read_versions) != 2
+        or any(type(version) is not int for version in read_versions)
+        or read_versions != [1, 2]
+    ):
+        raise ContractError(f"{label} read_versions are not exact integers")
+    if type(config["write_version"]) is not int or config["write_version"] != 2:
+        raise ContractError(f"{label} write_version is not the exact integer")
+    if (
+        not isinstance(config["migration_backup_suffix"], str)
+        or config["migration_backup_suffix"] != ".v1.bak"
+    ):
+        raise ContractError(f"{label} migration backup suffix is not exact")
+    return config
 
 
 def string(value: Any, pattern: re.Pattern[str], label: str) -> str:
@@ -190,12 +211,7 @@ def validate(
         raise ContractError("tag does not contain a real UTC timestamp") from error
     if manifest["created_at"] != expected_created_at:
         raise ContractError("manifest creation time does not match tag")
-    if manifest["config_contract"] != {
-        "read_versions": [1, 2],
-        "write_version": 2,
-        "migration_backup_suffix": ".v1.bak",
-    }:
-        raise ContractError("manifest config contract is not approved")
+    exact_config_contract(manifest["config_contract"], "manifest config contract")
 
     artifacts_value = manifest["artifacts"]
     if not isinstance(artifacts_value, list) or len(artifacts_value) != len(TARGETS):

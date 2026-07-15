@@ -31,6 +31,11 @@ candidate_step = candidate_steps.fetch(0)
 candidate_env = candidate_step.fetch("env", {})
 raise "candidate step receives GH_TOKEN" if candidate_env.key?("GH_TOKEN")
 raise "candidate step receives a token-like variable" if candidate_env.keys.any? { |key| key.include?("TOKEN") }
+candidate_run = candidate_step.fetch("run")
+raise "candidate run references GH_TOKEN" if candidate_run.include?("GH_TOKEN") || candidate_run.include?("github.token")
+raise "verifier parent environment is not cleared" unless candidate_run.include?("env -i")
+raise "verifier does not receive an isolated HOME" unless candidate_run.include?('HOME="$candidate_home"')
+raise "verifier PATH is not minimal" unless candidate_run.include?("PATH=/usr/bin:/bin")
 
 preflight_runs = preflight.fetch("steps").map { |step| step.fetch("run", "") }.join("\n")
 %w[
@@ -49,8 +54,24 @@ raise "write bump does not hard-need preflight" unless needs == ["preflight-dbot
 raise "write bump lacks explicit contents:write" unless bump["permissions"] == {"contents" => "write"}
 bump_runs = bump.fetch("steps").map { |step| step.fetch("run", "") }.join("\n")
 raise "write bump executes the candidate" if bump_runs.include?("scripts/verify-dbotter-preview-assets.py")
-raise "write bump downloads executable assets" if bump_runs.include?("dbotter-preview-linux-x86_64")
+%w[
+  dbotter-preview-aarch64.tar.gz
+  dbotter-preview-x86_64.tar.gz
+  dbotter-preview-linux-aarch64
+  dbotter-preview-linux-x86_64
+].each do |asset|
+  raise "write bump downloads executable asset #{asset}" if bump_runs.include?(asset)
+end
 raise "write bump omits trusted proof validation" unless bump_runs.include?("scripts/validate-dbotter-preview-preflight.py")
+%w[
+  --expected-tag
+  --expected-source-sha
+  --expected-version
+  --expected-manifest-url
+  --expected-manifest-sha256
+].each do |input|
+  raise "trusted proof validation omits #{input}" unless bump_runs.include?(input)
+end
 raise "write bump omits formula rendering" unless bump_runs.include?("scripts/render-dbotter-preview-formula.py")
 raise "proof validation does not precede rendering" unless bump_runs.index("scripts/validate-dbotter-preview-preflight.py") < bump_runs.index("scripts/render-dbotter-preview-formula.py")
 downloads = bump.fetch("steps").select { |step| step["uses"] == "actions/download-artifact@v4" }

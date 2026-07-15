@@ -76,10 +76,11 @@ TAG_RE = re.compile(
 SOURCE_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 PACKAGE_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
-APPROVED_CONFIG = {
-    "read_versions": [1, 2],
-    "write_version": 2,
-    "migration_backup_suffix": ".v1.bak",
+SANITIZED_CANDIDATE_ENV = {
+    "PATH": os.defpath,
+    "LANG": "C",
+    "LC_ALL": "C",
+    "TZ": "UTC",
 }
 MAX_COMMAND_OUTPUT_BYTES = 1024 * 1024
 
@@ -119,6 +120,26 @@ def load_json(path: Path, label: str) -> dict[str, Any]:
     return value
 
 
+def exact_config_contract(value: Any, label: str) -> dict[str, Any]:
+    config = exact_object(value, CONFIG_KEYS, label)
+    read_versions = config["read_versions"]
+    if (
+        not isinstance(read_versions, list)
+        or len(read_versions) != 2
+        or any(type(version) is not int for version in read_versions)
+        or read_versions != [1, 2]
+    ):
+        raise PreflightError(f"{label} read_versions are not exact integers")
+    if type(config["write_version"]) is not int or config["write_version"] != 2:
+        raise PreflightError(f"{label} write_version is not the exact integer")
+    if (
+        not isinstance(config["migration_backup_suffix"], str)
+        or config["migration_backup_suffix"] != ".v1.bak"
+    ):
+        raise PreflightError(f"{label} migration backup suffix is not exact")
+    return config
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -140,9 +161,7 @@ def validate_manifest(document: dict[str, Any]) -> tuple[str, str, str, dict[str
         raise PreflightError("manifest tag and source SHA disagree")
     if not isinstance(package_version, str) or PACKAGE_RE.fullmatch(package_version) is None:
         raise PreflightError("manifest package version is invalid")
-    config = exact_object(manifest["config_contract"], CONFIG_KEYS, "config contract")
-    if config != APPROVED_CONFIG:
-        raise PreflightError("manifest config contract is not approved")
+    config = exact_config_contract(manifest["config_contract"], "manifest config contract")
     artifacts = manifest["artifacts"]
     if not isinstance(artifacts, list) or len(artifacts) != len(TARGETS):
         raise PreflightError("manifest must contain exactly four artifacts")
@@ -208,13 +227,19 @@ def measure_artifacts(
 
 def run_json(candidate: Path, arguments: list[str], label: str) -> dict[str, Any]:
     try:
+        executable = candidate.resolve(strict=True)
+    except OSError as error:
+        raise PreflightError(f"candidate {label} executable is unavailable") from error
+    try:
         completed = subprocess.run(
-            [str(candidate), *arguments],
+            [str(executable), *arguments],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
             timeout=15,
+            cwd=executable.parent,
+            env=SANITIZED_CANDIDATE_ENV,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         raise PreflightError(f"candidate {label} command could not complete") from error
@@ -254,12 +279,11 @@ def execute_candidate(
     }
     if identity != expected_identity:
         raise PreflightError("candidate identity disagrees with manifest")
-    candidate_config = exact_object(
+    candidate_config = exact_config_contract(
         run_json(candidate, ["config-contract", "--format", "json"], "config contract"),
-        CONFIG_KEYS,
         "candidate config contract",
     )
-    if candidate_config != config or candidate_config != APPROVED_CONFIG:
+    if candidate_config != config:
         raise PreflightError("candidate config contract disagrees with manifest")
     return {
         "target": "x86_64-unknown-linux-gnu",
