@@ -74,6 +74,19 @@ grep -Fq 'sha256 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
   || fail "intel app archive hash missing"
 
 if "$renderer" \
+  --tag preview-2026-07-15-123456-123456789-2-0123456789ab \
+  --source-sha 0123456789abcdef0123456789abcdef01234567 \
+  --version 2026.07.15.123456.123456789.2 \
+  --greater-than 2026.07.15.123456.123456789.2 \
+  --manifest-url https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-15-123456-123456789-2-0123456789ab/preview-manifest.json \
+  --manifest-sha256 "$manifest_sha256" \
+  --manifest "$fixture" \
+  --template "$template" \
+  --output "$output.invalid" >/dev/null 2>&1; then
+  fail "renderer accepted a non-increasing preview version"
+fi
+
+if "$renderer" \
   --tag preview-2026-07-15-123456-123456789-2-ffffffffffff \
   --source-sha 0123456789abcdef0123456789abcdef01234567 \
   --version 2026.07.15.123456.123456789.2 \

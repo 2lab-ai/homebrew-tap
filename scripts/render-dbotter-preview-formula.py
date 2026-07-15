@@ -21,6 +21,10 @@ TAG_RE = re.compile(
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 SOURCE_RE = re.compile(r"^[0-9a-f]{40}$")
 PACKAGE_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+PREVIEW_VERSION_RE = re.compile(
+    r"^(\d{4})\.(\d{2})\.(\d{2})\.(\d{6})\.([1-9]\d*)\.([1-9]\d*)$"
+)
+LEGACY_PREVIEW_VERSION_RE = re.compile(r"^(\d{4})\.(\d{2})\.(\d{2})\.(\d{4})$")
 TOP_LEVEL_KEYS = {
     "tag",
     "source_sha",
@@ -106,12 +110,43 @@ def positive_integer(value: Any, label: str) -> int:
     return value
 
 
+def normalized_preview_version(value: str, *, allow_legacy: bool) -> tuple[int, ...]:
+    match = PREVIEW_VERSION_RE.fullmatch(value)
+    if match is not None:
+        year, month, day, clock, run_id, run_attempt = match.groups()
+        hour, minute, second = clock[:2], clock[2:4], clock[4:]
+        suffix = (int(run_id), int(run_attempt))
+    else:
+        legacy = LEGACY_PREVIEW_VERSION_RE.fullmatch(value) if allow_legacy else None
+        if legacy is None:
+            raise ContractError("preview version is invalid")
+        year, month, day, clock = legacy.groups()
+        hour, minute, second = clock[:2], clock[2:], "00"
+        suffix = (0, 0)
+    try:
+        timestamp = dt.datetime(
+            int(year), int(month), int(day), int(hour), int(minute), int(second)
+        )
+    except ValueError as error:
+        raise ContractError("preview version has an invalid UTC timestamp") from error
+    return (
+        timestamp.year,
+        timestamp.month,
+        timestamp.day,
+        timestamp.hour,
+        timestamp.minute,
+        timestamp.second,
+        *suffix,
+    )
+
+
 def validate(
     document: Any,
     *,
     tag: str,
     source_sha: str,
     version: str,
+    greater_than: str,
     manifest_url: str,
     manifest_sha256: str,
 ) -> dict[str, dict[str, Any]]:
@@ -124,6 +159,10 @@ def validate(
     expected_version = f"{year}.{month}.{day}.{clock}.{run_id_text}.{run_attempt_text}"
     if version != expected_version:
         raise ContractError("version does not derive exactly from tag")
+    if normalized_preview_version(version, allow_legacy=False) <= normalized_preview_version(
+        greater_than, allow_legacy=True
+    ):
+        raise ContractError("preview version is not strictly greater than the installed baseline")
     if not source_sha.startswith(sha12):
         raise ContractError("tag sha12 does not match source SHA")
     expected_manifest_url = (
@@ -251,6 +290,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tag", required=True)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--greater-than", required=True)
     parser.add_argument("--manifest-url", required=True)
     parser.add_argument("--manifest-sha256", required=True)
     parser.add_argument("--manifest", required=True, type=Path)
@@ -274,6 +314,7 @@ def main() -> int:
             tag=args.tag,
             source_sha=args.source_sha,
             version=args.version,
+            greater_than=args.greater_than,
             manifest_url=args.manifest_url,
             manifest_sha256=args.manifest_sha256,
         )
