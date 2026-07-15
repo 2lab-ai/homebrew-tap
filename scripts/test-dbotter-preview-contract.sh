@@ -109,4 +109,19 @@ if "$renderer" \
   fail "renderer accepted a mismatched manifest digest"
 fi
 
+awk 'NR == 2 { print "  \"tag\": \"preview-2026-07-15-123456-123456789-2-0123456789ab\"," } { print }' \
+  "$fixture" >"$invalid_manifest"
+invalid_sha256="$(shasum -a 256 "$invalid_manifest" | awk '{print $1}')"
+if "$renderer" \
+  --tag preview-2026-07-15-123456-123456789-2-0123456789ab \
+  --source-sha 0123456789abcdef0123456789abcdef01234567 \
+  --version 2026.07.15.123456.123456789.2 \
+  --manifest-url https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-15-123456-123456789-2-0123456789ab/preview-manifest.json \
+  --manifest-sha256 "$invalid_sha256" \
+  --manifest "$invalid_manifest" \
+  --template "$template" \
+  --output "$output.invalid" >/dev/null 2>&1; then
+  fail "renderer accepted duplicate JSON object keys"
+fi
+
 echo "dbotter preview tap contract: ok"
