@@ -20,14 +20,16 @@ printf 'macOS arm package\n' >"$assets/dbotter-preview-aarch64.tar.gz"
 printf 'macOS intel package\n' >"$assets/dbotter-preview-x86_64.tar.gz"
 printf 'Linux arm package\n' >"$assets/dbotter-preview-linux-aarch64"
 apply_fake_candidate() {
-  local config_write_version="${1:?write version required}"
+  local config_read_version="${1:?first read version required}"
+  local config_write_version="${2:?write version required}"
   sed \
+    -e "s/@READ_VERSION_ONE@/$config_read_version/" \
     -e "s/@WRITE_VERSION@/$config_write_version/" \
     "$root/tests/fixtures/dbotter-preview-linux-x86_64.fake" \
     >"$assets/dbotter-preview-linux-x86_64"
   chmod 0755 "$assets/dbotter-preview-linux-x86_64"
 }
-apply_fake_candidate 2
+apply_fake_candidate 1 2
 
 manifest="$temporary/preview-manifest.json"
 artifact_json="$temporary/artifacts.json"
@@ -122,6 +124,41 @@ jq -e '
   }
 ' "$receipt" >/dev/null || fail "verified receipt is incomplete"
 
+python3 - "$manifest" "$temporary" <<'PY'
+import copy
+import json
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1])
+destination = pathlib.Path(sys.argv[2])
+document = json.loads(source.read_text(encoding="utf-8"))
+cases = {
+    "manifest-read-bool.json": ("read_versions", [True, 2]),
+    "manifest-read-float.json": ("read_versions", [1.0, 2.0]),
+    "manifest-write-float.json": ("write_version", 2.0),
+}
+for filename, (field, value) in cases.items():
+    candidate = copy.deepcopy(document)
+    candidate["config_contract"][field] = value
+    (destination / filename).write_text(
+        json.dumps(candidate, indent=2) + "\n", encoding="utf-8"
+    )
+PY
+
+for typed_manifest in \
+  "$temporary/manifest-read-bool.json" \
+  "$temporary/manifest-read-float.json" \
+  "$temporary/manifest-write-float.json"; do
+  typed_name="$(basename "$typed_manifest" .json)"
+  if "$verifier" \
+    --manifest "$typed_manifest" \
+    --assets-dir "$assets" \
+    --output "$temporary/$typed_name-receipt.json" >/dev/null 2>&1; then
+    fail "verifier accepted a type-confused manifest config: $typed_name"
+  fi
+done
+
 cp "$manifest" "$temporary/tampered-manifest.json"
 printf 'tamper\n' >>"$assets/dbotter-preview-linux-aarch64"
 if "$verifier" \
@@ -132,7 +169,7 @@ if "$verifier" \
 fi
 printf 'Linux arm package\n' >"$assets/dbotter-preview-linux-aarch64"
 
-apply_fake_candidate 1
+apply_fake_candidate 1 1
 bad_candidate_manifest="$temporary/bad-candidate-manifest.json"
 bad_candidate_sha="$(shasum -a 256 "$assets/dbotter-preview-linux-x86_64" | awk '{print $1}')"
 bad_candidate_bytes="$(wc -c <"$assets/dbotter-preview-linux-x86_64" | tr -d ' ')"
@@ -152,7 +189,31 @@ fi
 grep -Fq 'candidate config contract disagrees with manifest' \
   "$temporary/bad-contract.stderr" \
   || fail "mismatched config contract was not rejected at candidate execution"
-apply_fake_candidate 2
+apply_fake_candidate 1 2
+
+for candidate_case in read-bool read-float write-float; do
+  case "$candidate_case" in
+    read-bool) apply_fake_candidate true 2 ;;
+    read-float) apply_fake_candidate 1.0 2 ;;
+    write-float) apply_fake_candidate 1 2.0 ;;
+  esac
+  typed_candidate_manifest="$temporary/candidate-$candidate_case-manifest.json"
+  typed_candidate_sha="$(shasum -a 256 "$assets/dbotter-preview-linux-x86_64" | awk '{print $1}')"
+  typed_candidate_bytes="$(wc -c <"$assets/dbotter-preview-linux-x86_64" | tr -d ' ')"
+  jq \
+    --arg sha256 "$typed_candidate_sha" \
+    --argjson bytes "$typed_candidate_bytes" '
+      (.artifacts[] | select(.target == "x86_64-unknown-linux-gnu")).sha256 = $sha256
+      | (.artifacts[] | select(.target == "x86_64-unknown-linux-gnu")).bytes = $bytes
+    ' "$manifest" >"$typed_candidate_manifest"
+  if "$verifier" \
+    --manifest "$typed_candidate_manifest" \
+    --assets-dir "$assets" \
+    --output "$temporary/candidate-$candidate_case-receipt.json" >/dev/null 2>&1; then
+    fail "verifier accepted a type-confused candidate config: $candidate_case"
+  fi
+done
+apply_fake_candidate 1 2
 
 printf 'preserve-existing-receipt\n' >"$temporary/existing-receipt.json"
 if "$verifier" \

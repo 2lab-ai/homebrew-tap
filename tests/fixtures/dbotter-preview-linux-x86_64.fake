@@ -6,7 +6,7 @@ case "$*" in
     printf '%s\n' '{"package_version":"0.1.0","channel":"preview","build_id":"2026-07-15-123456-123456789-2-0123456789ab","source_sha":"0123456789abcdef0123456789abcdef01234567","target":"x86_64-unknown-linux-gnu","arch":"x86_64"}'
     ;;
   "config-contract --format json")
-    printf '%s\n' '{"read_versions":[1,2],"write_version":@WRITE_VERSION@,"migration_backup_suffix":".v1.bak"}'
+    printf '%s\n' '{"read_versions":[@READ_VERSION_ONE@,2],"write_version":@WRITE_VERSION@,"migration_backup_suffix":".v1.bak"}'
     ;;
   *)
     exit 64

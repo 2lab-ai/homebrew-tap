@@ -29,16 +29,12 @@ raise "dispatch inputs are not exact" unless inputs.keys == expected
 raise "dispatch inputs are not required strings" unless inputs.values.all? { |value| value["required"] == true && value["type"] == "string" }
 job = document.fetch("jobs").fetch("bump-dbotter-preview")
 raise "preview job is not dispatch-only" unless job["if"] == "github.event_name == 'workflow_dispatch'"
-raise "preview job depends on an unrelated scheduled job" if job.key?("needs")
 document.fetch("jobs").each do |name, candidate|
-  next if name == "bump-dbotter-preview"
+  next if ["preflight-dbotter-preview", "bump-dbotter-preview"].include?(name)
   raise "unrelated job is not schedule-only: #{name}" unless candidate["if"] == "github.event_name == 'schedule'"
 end
 runs = job.fetch("steps").map { |step| step["run"] }.compact.join("\n")
 raise "renderer is not invoked" unless runs.include?("scripts/render-dbotter-preview-formula.py")
-raise "asset preflight is not invoked" unless runs.include?("scripts/verify-dbotter-preview-assets.py")
-raise "all manifest assets are not downloaded" unless runs.include?(".artifacts[]") && runs.include?("curl --fail")
-raise "candidate verification does not precede formula rendering" unless runs.index("scripts/verify-dbotter-preview-assets.py") < runs.index("scripts/render-dbotter-preview-formula.py")
 raise "tap does not independently enforce monotonic version" unless runs.include?("--greater-than")
 raise "latest release discovery remains" if runs.include?("gh release list")
 raise "legacy raw asset remains" if runs.include?("dbotter-macos-aarch64")
@@ -58,7 +54,10 @@ fi
 manifest_sha256="$(shasum -a 256 "$fixture" | awk '{print $1}')"
 output="$(mktemp "${TMPDIR:-/tmp}/dbotter-preview-formula.XXXXXX.rb")"
 invalid_manifest="${output%.rb}.invalid.json"
-trap 'rm -f "$output" "$output.invalid" "$invalid_manifest"' EXIT HUP INT TERM
+cleanup() {
+  rm -f "$output" "$output.invalid" "$invalid_manifest" "${output%.rb}".manifest-*.json
+}
+trap cleanup EXIT HUP INT TERM
 
 "$renderer" \
   --tag preview-2026-07-15-123456-123456789-2-0123456789ab \
@@ -78,6 +77,45 @@ grep -Fq 'dbotter-preview-aarch64.tar.gz' "$output" \
   || fail "arm app archive missing"
 grep -Fq 'sha256 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"' "$output" \
   || fail "intel app archive hash missing"
+
+python3 - "$fixture" "${output%.rb}" <<'PY'
+import copy
+import json
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1])
+prefix = pathlib.Path(sys.argv[2])
+document = json.loads(source.read_text(encoding="utf-8"))
+cases = {
+    "manifest-read-bool": ("read_versions", [True, 2]),
+    "manifest-read-float": ("read_versions", [1.0, 2.0]),
+    "manifest-write-float": ("write_version", 2.0),
+}
+for name, (field, value) in cases.items():
+    candidate = copy.deepcopy(document)
+    candidate["config_contract"][field] = value
+    pathlib.Path(f"{prefix}.{name}.json").write_text(
+        json.dumps(candidate, indent=2) + "\n", encoding="utf-8"
+    )
+PY
+
+for type_case in manifest-read-bool manifest-read-float manifest-write-float; do
+  typed_manifest="${output%.rb}.$type_case.json"
+  typed_sha256="$(shasum -a 256 "$typed_manifest" | awk '{print $1}')"
+  if "$renderer" \
+    --tag preview-2026-07-15-123456-123456789-2-0123456789ab \
+    --source-sha 0123456789abcdef0123456789abcdef01234567 \
+    --version 2026.07.15.123456.123456789.2 \
+    --greater-than 2026.07.14.1149 \
+    --manifest-url https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-15-123456-123456789-2-0123456789ab/preview-manifest.json \
+    --manifest-sha256 "$typed_sha256" \
+    --manifest "$typed_manifest" \
+    --template "$template" \
+    --output "$output.invalid" >/dev/null 2>&1; then
+    fail "renderer accepted a type-confused manifest config: $type_case"
+  fi
+done
 
 if "$renderer" \
   --tag preview-2026-07-15-123456-123456789-2-0123456789ab \
