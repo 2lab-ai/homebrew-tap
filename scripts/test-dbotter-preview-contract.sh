@@ -47,6 +47,10 @@ grep -Fq 'Dbotter Preview.app' "$template" \
   || fail "formula template does not install the app bundle"
 grep -Fq 'Contents/MacOS/dbotter' "$template" \
   || fail "formula template does not expose the embedded CLI"
+grep -Fq 'elsif (buildpath/"Contents").directory?' "$template" \
+  || fail "formula template does not handle Homebrew stripping the app wrapper"
+grep -Fq 'app.install "Contents"' "$template" \
+  || fail "formula template does not reconstruct a stripped app wrapper"
 if grep -Fq 'Dir["dbotter-*"].first' "$template"; then
   fail "formula template still accepts an arbitrary raw binary"
 fi

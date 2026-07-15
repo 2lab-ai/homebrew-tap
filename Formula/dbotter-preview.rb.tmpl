@@ -26,8 +26,15 @@ class DbotterPreview < Formula
   link_overwrite "bin/dbotter"
 
   def install
-    prefix.install "Dbotter Preview.app"
-    bin.install_symlink prefix/"Dbotter Preview.app/Contents/MacOS/dbotter" => "dbotter"
+    app = prefix/"Dbotter Preview.app"
+    if (buildpath/"Dbotter Preview.app").directory?
+      prefix.install "Dbotter Preview.app"
+    elsif (buildpath/"Contents").directory?
+      app.install "Contents"
+    else
+      odie "Dbotter Preview.app payload is missing"
+    end
+    bin.install_symlink app/"Contents/MacOS/dbotter" => "dbotter"
   end
 
   test do
