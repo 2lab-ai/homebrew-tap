@@ -4,35 +4,35 @@ class DbotterPreview < Formula
   version "@VERSION@"
   license "Apache-2.0"
 
+  # Immutable release identity:
+  # tag: @TAG@
+  # source: @SOURCE_SHA@
+  # manifest: @MANIFEST_URL@
+  # manifest-sha256: @MANIFEST_SHA256@
+
+  depends_on :macos
+
   on_macos do
     on_arm do
-      url "https://github.com/2lab-ai/dbotter/releases/download/@TAG@/dbotter-macos-aarch64"
+      url "@URL_MACOS_AARCH64@"
       sha256 "@SHA_MACOS_AARCH64@"
     end
     on_intel do
-      url "https://github.com/2lab-ai/dbotter/releases/download/@TAG@/dbotter-macos-x86_64"
+      url "@URL_MACOS_X86_64@"
       sha256 "@SHA_MACOS_X86_64@"
-    end
-  end
-
-  on_linux do
-    on_arm do
-      url "https://github.com/2lab-ai/dbotter/releases/download/@TAG@/dbotter-linux-aarch64"
-      sha256 "@SHA_LINUX_AARCH64@"
-    end
-    on_intel do
-      url "https://github.com/2lab-ai/dbotter/releases/download/@TAG@/dbotter-linux-x86_64"
-      sha256 "@SHA_LINUX_X86_64@"
     end
   end
 
   link_overwrite "bin/dbotter"
 
   def install
-    bin.install Dir["dbotter-*"].first => "dbotter"
+    prefix.install "Dbotter Preview.app"
+    bin.install_symlink prefix/"Dbotter Preview.app/Contents/MacOS/dbotter" => "dbotter"
   end
 
   test do
+    assert_predicate prefix/"Dbotter Preview.app", :directory?
+    assert_predicate prefix/"Dbotter Preview.app/Contents/MacOS/dbotter", :executable?
     assert_match "preview", shell_output("#{bin}/dbotter --version")
     shell_output("#{bin}/dbotter drivers")
   end
