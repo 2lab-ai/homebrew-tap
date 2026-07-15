@@ -133,12 +133,25 @@ fi
 printf 'Linux arm package\n' >"$assets/dbotter-preview-linux-aarch64"
 
 apply_fake_candidate 1
+bad_candidate_manifest="$temporary/bad-candidate-manifest.json"
+bad_candidate_sha="$(shasum -a 256 "$assets/dbotter-preview-linux-x86_64" | awk '{print $1}')"
+bad_candidate_bytes="$(wc -c <"$assets/dbotter-preview-linux-x86_64" | tr -d ' ')"
+jq \
+  --arg sha256 "$bad_candidate_sha" \
+  --argjson bytes "$bad_candidate_bytes" '
+    (.artifacts[] | select(.target == "x86_64-unknown-linux-gnu")).sha256 = $sha256
+    | (.artifacts[] | select(.target == "x86_64-unknown-linux-gnu")).bytes = $bytes
+  ' "$manifest" >"$bad_candidate_manifest"
 if "$verifier" \
-  --manifest "$manifest" \
+  --manifest "$bad_candidate_manifest" \
   --assets-dir "$assets" \
-  --output "$temporary/bad-contract-receipt.json" >/dev/null 2>&1; then
+  --output "$temporary/bad-contract-receipt.json" \
+  >"$temporary/bad-contract.stdout" 2>"$temporary/bad-contract.stderr"; then
   fail "verifier accepted a candidate with a mismatched config contract"
 fi
+grep -Fq 'candidate config contract disagrees with manifest' \
+  "$temporary/bad-contract.stderr" \
+  || fail "mismatched config contract was not rejected at candidate execution"
 apply_fake_candidate 2
 
 printf 'preserve-existing-receipt\n' >"$temporary/existing-receipt.json"

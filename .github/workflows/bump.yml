@@ -493,6 +493,25 @@ jobs:
             "$DBOTTER_MANIFEST_URL" --output "$temporary/preview-manifest.json"
           actual_manifest_sha256=$(sha256sum "$temporary/preview-manifest.json" | awk '{print $1}')
           [[ "$actual_manifest_sha256" == "$DBOTTER_MANIFEST_SHA256" ]]
+          jq -e '
+            (.artifacts | length) == 4
+            and ([.artifacts[].target] | unique | length) == 4
+          ' "$temporary/preview-manifest.json" >/dev/null
+          mkdir "$temporary/assets"
+          for asset in \
+            dbotter-preview-aarch64.tar.gz \
+            dbotter-preview-x86_64.tar.gz \
+            dbotter-preview-linux-aarch64 \
+            dbotter-preview-linux-x86_64; do
+            curl --fail --location --proto '=https' --tlsv1.2 \
+              "https://github.com/2lab-ai/dbotter/releases/download/$DBOTTER_TAG/$asset" \
+              --output "$temporary/assets/$asset"
+          done
+          chmod 0755 "$temporary/assets/dbotter-preview-linux-x86_64"
+          scripts/verify-dbotter-preview-assets.py \
+            --manifest "$temporary/preview-manifest.json" \
+            --assets-dir "$temporary/assets" \
+            --output dbotter-tap-preflight.json
           current_version=$(sed -n 's/^[[:space:]]*version "\([0-9.]*\)".*/\1/p' \
             Formula/dbotter-preview.rb | head -1)
           [[ -n "$current_version" ]]
@@ -557,6 +576,7 @@ jobs:
           formula_blob=$(git rev-parse "$FORMULA_COMMIT:Formula/dbotter-preview.rb")
           formula_sha256=$(sha256sum Formula/dbotter-preview.rb | awk '{print $1}')
           jq -n \
+            --slurpfile preflight dbotter-tap-preflight.json \
             --arg tag "$DBOTTER_TAG" \
             --arg source_sha "$DBOTTER_SOURCE_SHA" \
             --arg version "$DBOTTER_VERSION" \
@@ -586,7 +606,8 @@ jobs:
               workflow: {
                 run_id: $workflow_run_id,
                 run_attempt: $workflow_run_attempt
-              }
+              },
+              preflight: $preflight[0]
             }' >dbotter-tap-dispatch.json
 
       - name: Upload exact tap dispatch evidence
