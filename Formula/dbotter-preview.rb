@@ -1,38 +1,38 @@
 class DbotterPreview < Formula
   desc "Local Rust database client for MySQL and Redis (preview channel)"
   homepage "https://github.com/2lab-ai/dbotter"
-  version "2026.07.14.1149"
+  version "2026.07.15.230832.29456766125.1"
   license "Apache-2.0"
+
+  # Immutable release identity:
+  # tag: preview-2026-07-15-230832-29456766125-1-340133dca652
+  # source: 340133dca652a7bf51d652f06cdb7436b42bbc58
+  # manifest: https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-15-230832-29456766125-1-340133dca652/preview-manifest.json
+  # manifest-sha256: acf141c4eeb6fd1e5211b97097469116cf70619a742dfaa5ef7fe0ef4c2d1211
+
+  depends_on :macos
 
   on_macos do
     on_arm do
-      url "https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-14-1149-175779c8c8f8/dbotter-macos-aarch64"
-      sha256 "55e2775522ca85f96a1c91f156e0875befb54288daede97c69fddbb77e0b9895"
+      url "https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-15-230832-29456766125-1-340133dca652/dbotter-preview-aarch64.tar.gz"
+      sha256 "85a8ca1d1db1d7495b020e7637197a1ea910c97bc38137c8b7c45ca9fb856fdd"
     end
     on_intel do
-      url "https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-14-1149-175779c8c8f8/dbotter-macos-x86_64"
-      sha256 "d94c751ed282e4627ca937be258389a9a4c9e3741a947578d7435eb7454791f5"
-    end
-  end
-
-  on_linux do
-    on_arm do
-      url "https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-14-1149-175779c8c8f8/dbotter-linux-aarch64"
-      sha256 "1a9536307b3696b3971f97c07351a3d606da29506b99cb883ce0b18db6c51c62"
-    end
-    on_intel do
-      url "https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-14-1149-175779c8c8f8/dbotter-linux-x86_64"
-      sha256 "e3ca36db376c3f39207211b3f6918d8f47170ececacfd0a75421ffc28b7b7aa9"
+      url "https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-15-230832-29456766125-1-340133dca652/dbotter-preview-x86_64.tar.gz"
+      sha256 "18d1acdaa1555ac2f4b29bf9152f8ce2f4f8c2ff67d4b484d38b4c60f114d9a1"
     end
   end
 
   link_overwrite "bin/dbotter"
 
   def install
-    bin.install Dir["dbotter-*"].first => "dbotter"
+    prefix.install "Dbotter Preview.app"
+    bin.install_symlink prefix/"Dbotter Preview.app/Contents/MacOS/dbotter" => "dbotter"
   end
 
   test do
+    assert_predicate prefix/"Dbotter Preview.app", :directory?
+    assert_predicate prefix/"Dbotter Preview.app/Contents/MacOS/dbotter", :executable?
     assert_match "preview", shell_output("#{bin}/dbotter --version")
     shell_output("#{bin}/dbotter drivers")
   end
