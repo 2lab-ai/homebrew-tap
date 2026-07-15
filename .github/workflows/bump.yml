@@ -493,10 +493,14 @@ jobs:
             "$DBOTTER_MANIFEST_URL" --output "$temporary/preview-manifest.json"
           actual_manifest_sha256=$(sha256sum "$temporary/preview-manifest.json" | awk '{print $1}')
           [[ "$actual_manifest_sha256" == "$DBOTTER_MANIFEST_SHA256" ]]
+          current_version=$(sed -n 's/^[[:space:]]*version "\([0-9.]*\)".*/\1/p' \
+            Formula/dbotter-preview.rb | head -1)
+          [[ -n "$current_version" ]]
           scripts/render-dbotter-preview-formula.py \
             --tag "$DBOTTER_TAG" \
             --source-sha "$DBOTTER_SOURCE_SHA" \
             --version "$DBOTTER_VERSION" \
+            --greater-than "$current_version" \
             --manifest-url "$DBOTTER_MANIFEST_URL" \
             --manifest-sha256 "$DBOTTER_MANIFEST_SHA256" \
             --manifest "$temporary/preview-manifest.json" \

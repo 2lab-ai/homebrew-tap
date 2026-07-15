@@ -34,6 +34,7 @@ document.fetch("jobs").each do |name, candidate|
 end
 runs = job.fetch("steps").map { |step| step["run"] }.compact.join("\n")
 raise "renderer is not invoked" unless runs.include?("scripts/render-dbotter-preview-formula.py")
+raise "tap does not independently enforce monotonic version" unless runs.include?("--greater-than")
 raise "latest release discovery remains" if runs.include?("gh release list")
 raise "legacy raw asset remains" if runs.include?("dbotter-macos-aarch64")
 raise "tap evidence does not bind formula commit" unless runs.include?("dbotter.tap-dispatch.v1") && runs.include?("formula_commit")
@@ -57,6 +58,7 @@ trap 'rm -f "$output" "$output.invalid" "$invalid_manifest"' EXIT HUP INT TERM
   --tag preview-2026-07-15-123456-123456789-2-0123456789ab \
   --source-sha 0123456789abcdef0123456789abcdef01234567 \
   --version 2026.07.15.123456.123456789.2 \
+  --greater-than 2026.07.14.1149 \
   --manifest-url https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-15-123456-123456789-2-0123456789ab/preview-manifest.json \
   --manifest-sha256 "$manifest_sha256" \
   --manifest "$fixture" \
@@ -75,6 +77,7 @@ if "$renderer" \
   --tag preview-2026-07-15-123456-123456789-2-ffffffffffff \
   --source-sha 0123456789abcdef0123456789abcdef01234567 \
   --version 2026.07.15.123456.123456789.2 \
+  --greater-than 2026.07.14.1149 \
   --manifest-url https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-15-123456-123456789-2-ffffffffffff/preview-manifest.json \
   --manifest-sha256 "$manifest_sha256" \
   --manifest "$fixture" \
@@ -89,6 +92,7 @@ if "$renderer" \
   --tag preview-2026-07-15-123456-123456789-2-0123456789ab \
   --source-sha 0123456789abcdef0123456789abcdef01234567 \
   --version 2026.07.15.123456.123456789.2 \
+  --greater-than 2026.07.14.1149 \
   --manifest-url https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-15-123456-123456789-2-0123456789ab/preview-manifest.json \
   --manifest-sha256 "$invalid_sha256" \
   --manifest "$invalid_manifest" \
@@ -101,6 +105,7 @@ if "$renderer" \
   --tag preview-2026-07-15-123456-123456789-2-0123456789ab \
   --source-sha 0123456789abcdef0123456789abcdef01234567 \
   --version 2026.07.15.123456.123456789.2 \
+  --greater-than 2026.07.14.1149 \
   --manifest-url https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-15-123456-123456789-2-0123456789ab/preview-manifest.json \
   --manifest-sha256 ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff \
   --manifest "$fixture" \
@@ -116,6 +121,7 @@ if "$renderer" \
   --tag preview-2026-07-15-123456-123456789-2-0123456789ab \
   --source-sha 0123456789abcdef0123456789abcdef01234567 \
   --version 2026.07.15.123456.123456789.2 \
+  --greater-than 2026.07.14.1149 \
   --manifest-url https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-15-123456-123456789-2-0123456789ab/preview-manifest.json \
   --manifest-sha256 "$invalid_sha256" \
   --manifest "$invalid_manifest" \
