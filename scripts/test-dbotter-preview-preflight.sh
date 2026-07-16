@@ -31,7 +31,7 @@ apply_fake_candidate() {
     >"$assets/dbotter-preview-linux-x86_64"
   chmod 0755 "$assets/dbotter-preview-linux-x86_64"
 }
-apply_fake_candidate 1 2
+apply_fake_candidate 1 3
 
 manifest="$temporary/preview-manifest.json"
 artifact_json="$temporary/artifacts.json"
@@ -85,9 +85,12 @@ jq -n --slurpfile artifacts "$artifact_json" '
     version: "2026.07.15.123456.123456789.2",
     package_version: "0.1.0",
     config_contract: {
-      read_versions: [1, 2],
-      write_version: 2,
-      migration_backup_suffix: ".v1.bak"
+      read_versions: [1, 2, 3],
+      write_version: 3,
+      migration_backup_suffixes: {
+        "1": ".v1.bak",
+        "2": ".v2.bak"
+      }
     },
     run_id: 123456789,
     run_attempt: 2,
@@ -135,9 +138,12 @@ jq -e '
   and .candidate.identity.channel == "preview"
   and .candidate.identity.source_sha == "0123456789abcdef0123456789abcdef01234567"
   and .candidate.config_contract == {
-    read_versions: [1, 2],
-    write_version: 2,
-    migration_backup_suffix: ".v1.bak"
+    read_versions: [1, 2, 3],
+    write_version: 3,
+    migration_backup_suffixes: {
+      "1": ".v1.bak",
+      "2": ".v2.bak"
+    }
   }
 ' "$receipt" >/dev/null || fail "verified receipt is incomplete"
 
@@ -151,9 +157,9 @@ source = pathlib.Path(sys.argv[1])
 destination = pathlib.Path(sys.argv[2])
 document = json.loads(source.read_text(encoding="utf-8"))
 cases = {
-    "manifest-read-bool.json": ("read_versions", [True, 2]),
-    "manifest-read-float.json": ("read_versions", [1.0, 2.0]),
-    "manifest-write-float.json": ("write_version", 2.0),
+    "manifest-read-bool.json": ("read_versions", [True, 2, 3]),
+    "manifest-read-float.json": ("read_versions", [1.0, 2.0, 3.0]),
+    "manifest-write-float.json": ("write_version", 3.0),
 }
 for filename, (field, value) in cases.items():
     candidate = copy.deepcopy(document)
@@ -201,7 +207,7 @@ candidate = copy.deepcopy(document)
 candidate["candidate"]["config_contract"]["read_versions"][0] = True
 cases["proof-config-bool.json"] = candidate
 candidate = copy.deepcopy(document)
-candidate["candidate"]["config_contract"]["write_version"] = 2.0
+candidate["candidate"]["config_contract"]["write_version"] = 3.0
 cases["proof-config-float.json"] = candidate
 candidate = copy.deepcopy(document)
 candidate["artifacts"][0]["bytes"] += 1
@@ -237,7 +243,7 @@ if "$verifier" \
 fi
 printf 'Linux arm package\n' >"$assets/dbotter-preview-linux-aarch64"
 
-apply_fake_candidate 1 1
+apply_fake_candidate 1 2
 bad_candidate_manifest="$temporary/bad-candidate-manifest.json"
 bad_candidate_sha="$(shasum -a 256 "$assets/dbotter-preview-linux-x86_64" | awk '{print $1}')"
 bad_candidate_bytes="$(wc -c <"$assets/dbotter-preview-linux-x86_64" | tr -d ' ')"
@@ -257,13 +263,13 @@ fi
 grep -Fq 'candidate config contract write_version is not the exact integer' \
   "$temporary/bad-contract.stderr" \
   || fail "mismatched config contract was not rejected at candidate execution"
-apply_fake_candidate 1 2
+apply_fake_candidate 1 3
 
 for candidate_case in read-bool read-float write-float; do
   case "$candidate_case" in
-    read-bool) apply_fake_candidate true 2 ;;
-    read-float) apply_fake_candidate 1.0 2 ;;
-    write-float) apply_fake_candidate 1 2.0 ;;
+    read-bool) apply_fake_candidate true 3 ;;
+    read-float) apply_fake_candidate 1.0 3 ;;
+    write-float) apply_fake_candidate 1 3.0 ;;
   esac
   typed_candidate_manifest="$temporary/candidate-$candidate_case-manifest.json"
   typed_candidate_sha="$(shasum -a 256 "$assets/dbotter-preview-linux-x86_64" | awk '{print $1}')"
@@ -281,7 +287,7 @@ for candidate_case in read-bool read-float write-float; do
     fail "verifier accepted a type-confused candidate config: $candidate_case"
   fi
 done
-apply_fake_candidate 1 2
+apply_fake_candidate 1 3
 
 printf 'preserve-existing-receipt\n' >"$temporary/existing-receipt.json"
 if "$verifier" \

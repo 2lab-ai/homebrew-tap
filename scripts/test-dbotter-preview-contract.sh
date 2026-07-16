@@ -92,9 +92,9 @@ source = pathlib.Path(sys.argv[1])
 prefix = pathlib.Path(sys.argv[2])
 document = json.loads(source.read_text(encoding="utf-8"))
 cases = {
-    "manifest-read-bool": ("read_versions", [True, 2]),
-    "manifest-read-float": ("read_versions", [1.0, 2.0]),
-    "manifest-write-float": ("write_version", 2.0),
+    "manifest-read-bool": ("read_versions", [True, 2, 3]),
+    "manifest-read-float": ("read_versions", [1.0, 2.0, 3.0]),
+    "manifest-write-float": ("write_version", 3.0),
 }
 for name, (field, value) in cases.items():
     candidate = copy.deepcopy(document)

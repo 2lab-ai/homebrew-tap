@@ -35,7 +35,8 @@ IDENTITY_KEYS = {
     "target",
     "arch",
 }
-CONFIG_KEYS = {"read_versions", "write_version", "migration_backup_suffix"}
+CONFIG_KEYS = {"read_versions", "write_version", "migration_backup_suffixes"}
+MIGRATION_BACKUP_SUFFIX_KEYS = {"1", "2"}
 COMMON_ARTIFACT_KEYS = {"target", "arch", "kind", "url", "bytes", "sha256"}
 MACOS_ARTIFACT_KEYS = COMMON_ARTIFACT_KEYS | {
     "embedded_executable_sha256",
@@ -123,20 +124,27 @@ def load_json(path: Path, label: str) -> dict[str, Any]:
 def exact_config_contract(value: Any, label: str) -> dict[str, Any]:
     config = exact_object(value, CONFIG_KEYS, label)
     read_versions = config["read_versions"]
+    backup_suffixes = exact_object(
+        config["migration_backup_suffixes"],
+        MIGRATION_BACKUP_SUFFIX_KEYS,
+        f"{label} migration_backup_suffixes",
+    )
     if (
         not isinstance(read_versions, list)
-        or len(read_versions) != 2
+        or len(read_versions) != 3
         or any(type(version) is not int for version in read_versions)
-        or read_versions != [1, 2]
+        or read_versions != [1, 2, 3]
     ):
         raise PreflightError(f"{label} read_versions are not exact integers")
-    if type(config["write_version"]) is not int or config["write_version"] != 2:
+    if type(config["write_version"]) is not int or config["write_version"] != 3:
         raise PreflightError(f"{label} write_version is not the exact integer")
     if (
-        not isinstance(config["migration_backup_suffix"], str)
-        or config["migration_backup_suffix"] != ".v1.bak"
+        type(backup_suffixes["1"]) is not str
+        or backup_suffixes["1"] != ".v1.bak"
+        or type(backup_suffixes["2"]) is not str
+        or backup_suffixes["2"] != ".v2.bak"
     ):
-        raise PreflightError(f"{label} migration backup suffix is not exact")
+        raise PreflightError(f"{label} migration backup suffixes are not exact")
     return config
 
 
