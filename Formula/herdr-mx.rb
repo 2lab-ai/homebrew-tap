@@ -1,30 +1,30 @@
 class HerdrMx < Formula
   desc "herdr, multiplexed further - multi-remote distribution of herdr"
   homepage "https://github.com/2lab-ai/herdr-mx"
-  version "0.7.5-mx.1"
+  version "0.8.0-mx.1"
   license "AGPL-3.0-or-later"
 
   conflicts_with "herdr", because: "both install a `herdr` binary"
 
   on_macos do
     on_arm do
-      url "https://github.com/2lab-ai/herdr-mx/releases/download/v0.7.5-mx.1/herdr-macos-aarch64"
-      sha256 "b6a58348ccce59c7aac31b79da0c8fb2802b28616fb2b68c0a2557860f6535ce"
+      url "https://github.com/2lab-ai/herdr-mx/releases/download/v0.8.0-mx.1/herdr-macos-aarch64"
+      sha256 "d2f8790a214dbf5bb45533aedae5122e04b6afe046cf5c5983ab953b5a3b0982"
     end
     on_intel do
-      url "https://github.com/2lab-ai/herdr-mx/releases/download/v0.7.5-mx.1/herdr-macos-x86_64"
-      sha256 "82b72b32a29fe0902485035a06e10a15e07e628ade2bec0a772c2891af0e9add"
+      url "https://github.com/2lab-ai/herdr-mx/releases/download/v0.8.0-mx.1/herdr-macos-x86_64"
+      sha256 "9c6653885fcaa8a84cb012015831af7d9ddace4d260900c72952767007e77abb"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/2lab-ai/herdr-mx/releases/download/v0.7.5-mx.1/herdr-linux-aarch64"
-      sha256 "04b1488dd4d245c9eea12833b3de16be58ec712d2abe3517710f8d3d9c435eba"
+      url "https://github.com/2lab-ai/herdr-mx/releases/download/v0.8.0-mx.1/herdr-linux-aarch64"
+      sha256 "2679093c94f5dd37466b84c1e7389270db889909222149ae28d032040f775daa"
     end
     on_intel do
-      url "https://github.com/2lab-ai/herdr-mx/releases/download/v0.7.5-mx.1/herdr-linux-x86_64"
-      sha256 "ea2251430b42d4dcd6581ebd75610c76bb73b907f5424284361db350be90c75a"
+      url "https://github.com/2lab-ai/herdr-mx/releases/download/v0.8.0-mx.1/herdr-linux-x86_64"
+      sha256 "5fe2bebe2a2546810ed915c1f8da9f4057c289dea1113b45059806856940021f"
     end
   end
 
