@@ -19,13 +19,14 @@ class PdcPreview < Formula
   def install
     system "cargo", "install", "--bin", "pdc", *std_cargo_args
 
-    # libexec is not symlinked into the prefix, so this copy of the runtime
-    # cannot collide with the stable channel's copy of the same filenames.
-    # The wrapper points this binary at its own.
-    (libexec/"palladium").install "runtime"
-    libexec.install bin/"pdc"
-    bin.write_env_script libexec/"pdc", "pdc-preview",
-                         PALLADIUM_RUNTIME: libexec/"palladium/runtime"
+    mv bin/"pdc", bin/"pdc-preview"
+
+    # lib/, not share/: the stable channel installs the same filenames under
+    # share/palladium/runtime, and Homebrew refuses to symlink the second keg
+    # over the first. pdc's runtime resolver already searches
+    # ../lib/palladium/runtime after ../share/palladium/runtime, and it
+    # canonicalizes its own path first, so this binary finds its own copy.
+    (lib/"palladium").install "runtime"
   end
 
   def caveats

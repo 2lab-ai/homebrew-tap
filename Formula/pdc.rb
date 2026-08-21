@@ -20,15 +20,9 @@ class Pdc < Formula
 
     # The C runtime is not optional: generated C declares 16 extern symbols that
     # live in palladium_runtime.c, and includes pd_prelude.h. Without them the
-    # compiler links nothing.
-    #
-    # It goes in libexec, which Homebrew does NOT symlink into the prefix, and
-    # the binary is wrapped to point at it. Installing it under share/ instead
-    # would collide with pdc-preview, which ships its own copy of the same
-    # filenames — the two channels are meant to coexist.
-    (libexec/"palladium").install "runtime"
-    libexec.install bin/"pdc"
-    bin.write_env_script libexec/"pdc", PALLADIUM_RUNTIME: libexec/"palladium/runtime"
+    # compiler links nothing. pdc canonicalizes its own path and looks for
+    # ../share/palladium/runtime first, which resolves inside this keg.
+    (share/"palladium").install "runtime"
   end
 
   def caveats
