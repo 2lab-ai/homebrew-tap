@@ -445,6 +445,133 @@ jobs:
           git pull --rebase
           git push
 
+  bump-xfx-preview:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Render xfx-preview formula from the latest preview prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Scheduled backstop only: xfx's own preview workflow renders this formula
+          # over a repo-scoped deploy key as soon as it publishes, so this job only
+          # has to converge within six hours when that direct push is skipped or
+          # fails. It deliberately carries no `needs:` — a broken llmux or dbotter
+          # bump must not keep the xfx preview formula stale.
+          preview_version_gt() {
+            # Exit 0 when $1 is strictly newer than $2, comparing dot-separated
+            # decimal fields (YYYY.MM.DD.HHMMSS.run_id.attempt). The tap must never
+            # replace a formula with an older build, and leading-zero clock fields
+            # must not be read as octal.
+            local left="${1:?left version required}" right="${2:?right version required}"
+            local -a l r
+            IFS='.' read -r -a l <<<"$left"
+            IFS='.' read -r -a r <<<"$right"
+            local count=${#l[@]}
+            if [ "${#r[@]}" -gt "$count" ]; then count=${#r[@]}; fi
+            local i x y
+            for ((i = 0; i < count; i++)); do
+              x=$((10#${l[i]:-0}))
+              y=$((10#${r[i]:-0}))
+              if [ "$x" -gt "$y" ]; then return 0; fi
+              if [ "$x" -lt "$y" ]; then return 1; fi
+            done
+            return 1
+          }
+
+          TAG=$(gh release list --repo 2lab-ai/xfx --limit 100 \
+            --json tagName,isPrerelease,createdAt \
+            --jq '[.[] | select(.isPrerelease and (.tagName | startswith("preview-")))] | sort_by(.createdAt) | last | .tagName // empty')
+          if [ -z "$TAG" ]; then
+            echo "no xfx preview prerelease yet"
+            exit 0
+          fi
+          # preview-YYYY-MM-DD-HHMMSS-<run_id>-<attempt>-<sha12>
+          if ! [[ "$TAG" =~ ^preview-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{6})-([1-9][0-9]*)-([1-9][0-9]*)-([0-9a-f]{12})$ ]]; then
+            echo "tag does not match the xfx preview contract: $TAG" >&2
+            exit 1
+          fi
+          VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.${BASH_REMATCH[4]}.${BASH_REMATCH[5]}.${BASH_REMATCH[6]}"
+          TAG_SHA12="${BASH_REMATCH[7]}"
+
+          CURRENT=$(sed -n 's/^  version "\(.*\)"$/\1/p' Formula/xfx-preview.rb 2>/dev/null | head -1 || true)
+          if [ -n "${CURRENT:-}" ]; then
+            if ! [[ "$CURRENT" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+              echo "existing xfx-preview version is unreadable: $CURRENT" >&2
+              exit 1
+            fi
+            if ! preview_version_gt "$VERSION" "$CURRENT"; then
+              echo "formula already at $CURRENT; refusing to replace it with $VERSION"
+              exit 0
+            fi
+          fi
+
+          release=$(gh release view "$TAG" --repo 2lab-ai/xfx --json tagName,isPrerelease)
+          [[ "$(jq -r '.tagName' <<<"$release")" == "$TAG" ]]
+          [[ "$(jq -r '.isPrerelease' <<<"$release")" == "true" ]]
+          ref=$(gh api "repos/2lab-ai/xfx/git/ref/tags/$TAG")
+          [[ "$(jq -r '.object.type' <<<"$ref")" == "commit" ]]
+          SOURCE_SHA=$(jq -r '.object.sha' <<<"$ref")
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${SOURCE_SHA:0:12}" == "$TAG_SHA12" ]]
+
+          assets=$(mktemp -d)
+          trap 'rm -rf "$assets"' EXIT HUP INT TERM
+          gh release download "$TAG" --repo 2lab-ai/xfx --pattern SHA256SUMS \
+            --output "$assets/SHA256SUMS" --clobber
+          for asset in xfx-macos-aarch64 xfx-macos-x86_64 xfx-linux-aarch64 xfx-linux-x86_64; do
+            gh release download "$TAG" --repo 2lab-ai/xfx --pattern "$asset" \
+              --output "$assets/$asset" --clobber
+          done
+          # SHA256SUMS must describe exactly the four contract assets, and every
+          # entry must match the bytes that were actually published.
+          expected_names=$(printf '%s\n' xfx-linux-aarch64 xfx-linux-x86_64 xfx-macos-aarch64 xfx-macos-x86_64)
+          actual_names=$(awk '{ file = $2; sub(/^\*/, "", file); print file }' "$assets/SHA256SUMS" | sort)
+          [[ "$actual_names" == "$expected_names" ]]
+          ( cd "$assets" && sha256sum --check --strict SHA256SUMS )
+
+          declare -A SHAS
+          for asset in xfx-macos-aarch64 xfx-macos-x86_64 xfx-linux-aarch64 xfx-linux-x86_64; do
+            SHAS[$asset]=$(awk -v name="$asset" '{ file = $2; sub(/^\*/, "", file); if (file == name) print $1 }' "$assets/SHA256SUMS")
+            [[ "${SHAS[$asset]}" =~ ^[0-9a-f]{64}$ ]]
+          done
+
+          sed -e "s/@VERSION@/$VERSION/g" \
+              -e "s/@TAG@/$TAG/g" \
+              -e "s/@SOURCE_SHA@/$SOURCE_SHA/g" \
+              -e "s/@SOURCE_SHA12@/$TAG_SHA12/g" \
+              -e "s/@SHA_MACOS_AARCH64@/${SHAS[xfx-macos-aarch64]}/" \
+              -e "s/@SHA_MACOS_X86_64@/${SHAS[xfx-macos-x86_64]}/" \
+              -e "s/@SHA_LINUX_AARCH64@/${SHAS[xfx-linux-aarch64]}/" \
+              -e "s/@SHA_LINUX_X86_64@/${SHAS[xfx-linux-x86_64]}/" \
+              Formula/xfx-preview.rb.tmpl > Formula/xfx-preview.rb
+
+          ruby -c Formula/xfx-preview.rb
+          if grep -q '@[A-Z0-9_]*@' Formula/xfx-preview.rb; then
+            echo "rendered formula still carries placeholders" >&2
+            exit 1
+          fi
+          grep -Fq "# tag: $TAG" Formula/xfx-preview.rb
+          grep -Fq "# source: $SOURCE_SHA" Formula/xfx-preview.rb
+
+      - name: Commit xfx preview bump
+        run: |
+          set -euo pipefail
+          [ -f Formula/xfx-preview.rb ] || { echo "no formula rendered; nothing to commit"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/xfx-preview.rb
+          git diff --cached --quiet && { echo "nothing to commit"; exit 0; }
+          TAG=$(sed -n 's|^.*releases/download/\(preview-[^/]*\)/.*$|\1|p' Formula/xfx-preview.rb | head -1)
+          git commit -m "xfx-preview $TAG"
+          git pull --rebase
+          git push
+
   preflight-dbotter-preview:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -708,3 +835,5 @@ jobs:
 # registered: llmux-islands cask auto-bump (rides the llmux stable release)
 # registered: llmux-islands-preview cask auto-bump (rides the llmux preview prerelease)
 # registered: dbotter formula auto-bump (preview; stable added when a v* release exists)
+# registered: xfx-preview formula auto-bump (scheduled backstop; the xfx preview
+#             workflow pushes the formula directly for immediate propagation)
