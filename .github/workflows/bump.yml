@@ -495,6 +495,34 @@ jobs:
             return 1
           }
 
+          published_version() {
+            # Print the version currently published in Formula/xfx-preview.rb, or
+            # nothing at all when no formula is published yet. Exit 2 when a formula
+            # EXISTS but does not carry exactly one readable version line.
+            #
+            # Existence is tested on its own for a reason: grepping the version out
+            # of a file that has none yields an empty string, which is exactly what
+            # "no formula yet" looks like, so a hand-edited or half-written formula
+            # would be silently overwritten instead of stopping the job.
+            local lines count
+            [ -e Formula/xfx-preview.rb ] || return 0
+            lines=$(sed -n 's/^  version "\(.*\)"$/\1/p' Formula/xfx-preview.rb)
+            if [ -z "$lines" ]; then
+              echo "the published xfx-preview formula has no version line" >&2
+              return 2
+            fi
+            count=$(printf '%s' "$lines" | grep -c '^' || true)
+            if [ "$count" -ne 1 ]; then
+              echo "the published xfx-preview formula has $count version lines" >&2
+              return 2
+            fi
+            if ! [[ "$lines" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+              echo "the published xfx-preview version is unreadable: $lines" >&2
+              return 2
+            fi
+            printf '%s\n' "$lines"
+          }
+
           preview_bump_needed() {
             # Exit 0 when the selected version $1 may replace the formula's current
             # version $2 (empty = no formula yet). Exit 1 = same or older, a no-op.
@@ -521,7 +549,7 @@ jobs:
             # an invalid tag never becomes a ranking candidate; each rejection is
             # reported on stderr rather than swallowed.
             local releases candidates tag prerelease version sha12
-            local ref object_type source_sha
+            local ref ref_status ref_fields object_type source_sha
             local best_tag="" best_version="" best_sha="" seen=0
             # This function is called inside a guarded command substitution, which
             # disables `set -e` for everything it runs. A failed or unreadable query
@@ -534,9 +562,18 @@ jobs:
               echo "could not list xfx releases" >&2
               return 2
             fi
+            # A query can also succeed and print nothing at all, or a truncated
+            # body, or an error object. jq reads zero documents from empty input
+            # and exits 0, so "no output" would otherwise degrade to "no releases".
+            # Require exactly one document and require it to be an array: a valid
+            # `[]` is the only thing allowed to mean "nothing published yet".
+            if ! printf '%s' "$releases" | jq -e -s \
+              'length == 1 and ((.[0] | type) == "array")' >/dev/null 2>&1; then
+              echo "the xfx release listing is not exactly one JSON array" >&2
+              return 2
+            fi
             if ! candidates=$(printf '%s' "$releases" | jq -r \
-              'if type == "array" then .[] else error("release listing is not an array") end
-               | select(.tagName | startswith("preview-"))
+              '.[] | select(.tagName | startswith("preview-"))
                | [.tagName, (.isPrerelease | tostring)] | @tsv'); then
               echo "could not read the xfx release listing" >&2
               return 2
@@ -556,12 +593,41 @@ jobs:
               fi
               version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.${BASH_REMATCH[4]}.${BASH_REMATCH[5]}.${BASH_REMATCH[6]}"
               sha12="${BASH_REMATCH[7]}"
-              if ! ref=$(gh api "repos/2lab-ai/xfx/git/ref/tags/$tag" 2>/dev/null); then
-                echo "skipping $tag: no such git tag ref" >&2
-                continue
+              # Only a CONFIRMED 404 makes a candidate invalid. Treating every
+              # failure as "tag missing" lets a transient 5xx, an expired token or
+              # a rate limit on the newest build silently promote an older one,
+              # which is a downgrade with extra steps. stderr is folded into the
+              # capture so the failure can be classified; a success that also wrote
+              # to stderr fails the guarded parse below, which is the safe way out.
+              ref_status=0
+              ref=$(gh api "repos/2lab-ai/xfx/git/ref/tags/$tag" 2>&1) || ref_status=$?
+              if [ "$ref_status" -ne 0 ]; then
+                case "$ref" in
+                  *"HTTP 404"*|*"Not Found"*)
+                    echo "skipping $tag: no such git tag ref (404)" >&2
+                    continue
+                    ;;
+                  *)
+                    echo "could not query the tag ref for $tag: $ref" >&2
+                    return 2
+                    ;;
+                esac
               fi
-              object_type=$(printf '%s' "$ref" | jq -r '.object.type')
-              source_sha=$(printf '%s' "$ref" | jq -r '.object.sha')
+              # One validated read: a ref that comes back but is not a git ref
+              # object is a parse failure, not a missing tag. Two bare `jq -r`
+              # reads would quietly yield the string "null" and fall through to
+              # the checks below as if the API had answered.
+              if ! ref_fields=$(printf '%s' "$ref" | jq -e -s -r \
+                'if length != 1 then error("expected exactly one tag ref document") else .[0] end
+                 | if (type == "object") and ((.object | type) == "object")
+                      and ((.object.type | type) == "string")
+                      and ((.object.sha | type) == "string")
+                   then [.object.type, .object.sha] | @tsv
+                   else error("tag ref is not a git ref object") end' 2>/dev/null); then
+                echo "could not read the tag ref for $tag" >&2
+                return 2
+              fi
+              IFS=$'\t' read -r object_type source_sha <<<"$ref_fields"
               if [ "$object_type" != "commit" ]; then
                 echo "skipping $tag: tag object is $object_type, not a commit" >&2
                 continue
@@ -612,10 +678,16 @@ jobs:
           # that the exact tag we are about to pin is still the prerelease we chose.
           release=$(gh release view "$TAG" --repo 2lab-ai/xfx --json tagName,isPrerelease) \
             || die "could not re-read release $TAG"
-          [[ "$(jq -r '.tagName' <<<"$release")" == "$TAG" ]] \
-            || die "release lookup returned a different tag than $TAG"
-          [[ "$(jq -r '.isPrerelease' <<<"$release")" == "true" ]] \
-            || die "$TAG is no longer a prerelease"
+          # One explicitly guarded check over the whole response. Reading the two
+          # fields with separate `jq -r` calls compares output that jq printed
+          # BEFORE it hit a parse error, so a well-formed object followed by junk
+          # would satisfy both comparisons while jq was failing underneath them.
+          printf '%s' "$release" | jq -e -s --arg tag "$TAG" \
+            'length == 1
+             and ((.[0] | type) == "object")
+             and (.[0].tagName == $tag)
+             and (.[0].isPrerelease == true)' >/dev/null 2>&1 \
+            || die "$TAG did not re-read as exactly one prerelease named $TAG"
 
           assets=$(mktemp -d)
           trap 'rm -rf "$assets"' EXIT HUP INT TERM
@@ -673,7 +745,11 @@ jobs:
             # back as if it were published.
             git clean -qfd Formula || die "could not clean the Formula directory"
 
-            CURRENT=$(sed -n 's/^  version "\(.*\)"$/\1/p' Formula/xfx-preview.rb 2>/dev/null | head -1 || true)
+            current_status=0
+            CURRENT=$(published_version) || current_status=$?
+            if [ "$current_status" -ne 0 ]; then
+              die "refusing to overwrite an xfx-preview formula this job cannot read"
+            fi
             bump_status=0
             preview_bump_needed "$VERSION" "${CURRENT:-}" || bump_status=$?
             if [ "$bump_status" -eq 1 ]; then

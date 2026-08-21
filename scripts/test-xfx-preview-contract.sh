@@ -85,8 +85,12 @@ check(runs.include?("sha256sum --check --strict SHA256SUMS"),
 # only the variable names around them.
 check(runs.include?('[[ "$actual_names" == "$expected_names" ]]'),
       "job does not compare the SHA256SUMS entry set against the four contract assets")
-check(runs.include?(%q{[[ "$(jq -r '.tagName' <<<"$release")" == "$TAG" ]]}),
-      "job does not reconfirm that the re-read release is the tag it selected")
+check(runs.include?("(.[0].tagName == $tag)") && runs.include?("(.[0].isPrerelease == true)"),
+      "job does not reconfirm the re-read release tag and prerelease flag together")
+check(!runs.include?(%q{jq -r '.tagName' <<<"$release"}),
+      "job still reads the re-read release through an unguarded jq, whose output survives its own parse error")
+check(runs.include?("published_version"),
+      "job does not test for an existing formula separately from reading its version")
 check(runs.include?("preview_version_gt"),
       "job has no numeric freshness comparator")
 check(runs.include?("select_preview_release"),
@@ -252,6 +256,11 @@ case "$subcommand" in
           echo "gh: could not reach api.github.com" >&2
           exit "$XFX_STUB_LIST_STATUS"
         fi
+        if [ -n "${XFX_STUB_LIST_EMPTY:-}" ]; then
+          # Succeeds and prints nothing at all. jq reads zero documents from that
+          # and exits 0, which must not be mistaken for an empty release list.
+          exit 0
+        fi
         if [ -n "${XFX_STUB_LIST_GARBAGE:-}" ]; then
           printf '%s\n' "$XFX_STUB_LIST_GARBAGE"
           exit 0
@@ -264,6 +273,11 @@ case "$subcommand" in
         jq -c --arg tag "$target" \
           '[.[] | select(.tagName == $tag)] | first | {tagName, isPrerelease}' \
           "${XFX_STUB_VIEW:-$XFX_STUB_RELEASES}"
+        # Expected output followed by junk: anything that reads only the first
+        # document sees exactly what it wanted and misses the failure entirely.
+        if [ -n "${XFX_STUB_VIEW_TRAILER:-}" ]; then
+          printf '%s\n' "$XFX_STUB_VIEW_TRAILER"
+        fi
         ;;
       download)
         if [ -f "$XFX_STUB_ASSETS/$pattern" ]; then
@@ -280,8 +294,21 @@ case "$subcommand" in
     esac
     ;;
   api)
-    ref="$XFX_STUB_REFS/${action##*/}.json"
-    if [ -f "$ref" ]; then cat "$ref"; else echo "gh: 404 $action" >&2; exit 1; fi
+    # A `<tag>.fail` file models a query that failed for a reason other than the
+    # tag being absent: "503 Service Unavailable", "401 Bad credentials", ...
+    ref_tag="${action##*/}"
+    if [ -f "$XFX_STUB_REFS/$ref_tag.fail" ]; then
+      read -r fail_status fail_message <"$XFX_STUB_REFS/$ref_tag.fail"
+      echo "gh: $fail_message" >&2
+      exit "$fail_status"
+    fi
+    ref="$XFX_STUB_REFS/$ref_tag.json"
+    if [ -f "$ref" ]; then
+      cat "$ref"
+    else
+      echo "gh: Not Found (HTTP 404)" >&2
+      exit 1
+    fi
     ;;
   *)
     echo "unexpected gh $subcommand" >&2
@@ -298,6 +325,8 @@ ref_json() {
 
 # One valid but older build whose release was created *after* the winner.
 decoy_tag="preview-2026-08-20-101010-32500000000-1-aaaaaaaaaaaa"
+decoy_version="2026.08.20.101010.32500000000.1"
+decoy_sha="aaaaaaaaaaaabcdef0123456789abcdef0123456"
 # Every remaining candidate is invalid, and each carries a later stamp than the
 # winner so a naive "newest wins" selector would take it.
 malformed_tag="preview-2026-08-24-0900-32700000000-1-cccccccccccc"
@@ -307,7 +336,7 @@ sha_mismatch_tag="preview-2026-08-27-000000-33000000000-1-ffffffffffff"
 annotated_tag="preview-2026-08-28-000000-33100000000-1-111111111111"
 
 ref_json "$tag" commit "$source_sha"
-ref_json "$decoy_tag" commit "aaaaaaaaaaaabcdef0123456789abcdef0123456"
+ref_json "$decoy_tag" commit "$decoy_sha"
 ref_json "$malformed_tag" commit "ccccccccccccbcdef0123456789abcdef0123456"
 ref_json "$unreleased_tag" commit "ddddddddddddbcdef0123456789abcdef0123456"
 ref_json "$sha_mismatch_tag" commit "0000000000000000000000000000000000000000"
@@ -429,6 +458,94 @@ selection_status=0
 select_with_broken_list "" '{"message":"Not Found"}' >/dev/null || selection_status=$?
 [[ "$selection_status" -eq 2 ]] \
   || fail "a non-array release listing reports $selection_status, not an error (2)"
+
+# A query that succeeds and prints nothing is not an empty release list: jq reads
+# zero documents from it and exits 0, so an unguarded pipeline degrades to no-op.
+selection_status=0
+export XFX_STUB_LIST_EMPTY=1
+select_with mixed >/dev/null || selection_status=$?
+unset XFX_STUB_LIST_EMPTY
+[[ "$selection_status" -eq 2 ]] \
+  || fail "an empty-but-successful release query reports $selection_status, not an error (2)"
+
+selection_status=0
+select_with_broken_list "" '[{"tagName":"v0.1.0","isPrerelease":false}] trailing junk' >/dev/null \
+  || selection_status=$?
+[[ "$selection_status" -eq 2 ]] \
+  || fail "a release listing with trailing bytes reports $selection_status, not an error (2)"
+
+# Two well-formed documents in one response: every byte parses, so only a document
+# count catches it. Left unchecked, both arrays feed the candidate extraction.
+selection_status=0
+select_with_broken_list "" \
+  "[{\"tagName\":\"$tag\",\"isPrerelease\":true}] [{\"tagName\":\"$decoy_tag\",\"isPrerelease\":true}]" \
+  >/dev/null || selection_status=$?
+[[ "$selection_status" -eq 2 ]] \
+  || fail "a doubled release listing reports $selection_status, not an error (2)"
+
+# ...but a genuinely empty array is the one case that means "nothing published".
+printf '[]\n' >"$work/releases-empty-array.json"
+selection_status=0
+select_with empty-array >/dev/null || selection_status=$?
+[[ "$selection_status" -eq 1 ]] \
+  || fail "an empty release array reports $selection_status, not the no-op code (1)"
+
+# A per-candidate ref query that failed for any reason other than a confirmed 404
+# must stop the job. Silently treating it as "tag missing" lets a transient 5xx on
+# the newest build promote an older one, which is a downgrade with extra steps.
+ref_fail() {
+  printf '%s %s\n' "$2" "$3" >"$work/refs/$1.fail"
+}
+cat >"$work/releases-transient.json" <<JSON
+[
+  {"tagName": "$tag", "isPrerelease": true, "createdAt": "2026-08-21T00:00:00Z"},
+  {"tagName": "$decoy_tag", "isPrerelease": true, "createdAt": "2026-08-30T00:00:00Z"}
+]
+JSON
+for failure in "503 Service Unavailable (HTTP 503)" \
+               "401 Bad credentials (HTTP 401)" \
+               "1 API rate limit exceeded (HTTP 403)"; do
+  status="${failure%% *}"
+  message="${failure#* }"
+  ref_fail "$tag" "$status" "$message"
+  selection_status=0
+  selection="$(select_with transient)" || selection_status=$?
+  rm -f "$work/refs/$tag.fail"
+  [[ "$selection_status" -eq 2 ]] \
+    || fail "a '$message' ref query reports $selection_status; selector returned '${selection:-}' instead of failing"
+done
+
+# A confirmed 404 stays an invalid-candidate skip, so one deleted tag does not
+# stop the tap from tracking the newest build that does exist.
+mv "$work/refs/$tag.json" "$work/refs/$tag.json.hidden"
+selection_status=0
+selection="$(select_with transient)" || selection_status=$?
+mv "$work/refs/$tag.json.hidden" "$work/refs/$tag.json"
+[[ "$selection_status" -eq 0 ]] \
+  || fail "a confirmed 404 on one candidate stopped the whole selection (exit $selection_status)"
+[[ "$selection" == "$(printf '%s\t%s\t%s' "$decoy_tag" "$decoy_version" "$decoy_sha")" ]] \
+  || fail "after skipping a deleted tag the selector chose $(printf '%q' "$selection")"
+
+# A ref that comes back but is not a git ref object is a parse failure, not a
+# missing tag: the two unguarded jq reads it replaced could yield "null".
+printf '{"message":"Moved Permanently"}\n' >"$work/refs/$tag.json"
+selection_status=0
+selection="$(select_with transient)" || selection_status=$?
+ref_json "$tag" commit "$source_sha"
+[[ "$selection_status" -eq 2 ]] \
+  || fail "an unreadable tag ref reports $selection_status; selector returned '${selection:-}'"
+
+# Two well-formed ref documents in one response: every byte parses, so only a
+# document count catches it, and reading just the first would answer confidently.
+{
+  printf '{"ref":"refs/tags/%s","object":{"type":"commit","sha":"%s"}}\n' "$tag" "$source_sha"
+  printf '{"ref":"refs/tags/%s","object":{"type":"commit","sha":"%s"}}\n' "$decoy_tag" "$decoy_sha"
+} >"$work/refs/$tag.json"
+selection_status=0
+selection="$(select_with transient)" || selection_status=$?
+ref_json "$tag" commit "$source_sha"
+[[ "$selection_status" -eq 2 ]] \
+  || fail "a doubled tag ref reports $selection_status; selector returned '${selection:-}'"
 
 # ------------------------------------------------- render step, end to end --
 
@@ -624,6 +741,53 @@ publish_step || publish_status=$?
   || fail "publish step accepted a formula whose version it cannot read"
 [[ "$(remote_version)" == "preview-2026-08-22" ]] \
   || fail "publish step clobbered a formula whose version it cannot read"
+
+# A published formula that exists but carries no readable version is not an absent
+# formula. Treating it as absent overwrites whatever a human or another writer put
+# there, which is the one thing this job must never do.
+seed_remote_file() {
+  local src="${1:?formula required}"
+  "$XFX_REAL_GIT" -C "$other" fetch -q origin master
+  "$XFX_REAL_GIT" -C "$other" reset -q --hard FETCH_HEAD
+  cp "$src" "$other/Formula/xfx-preview.rb"
+  "$XFX_REAL_GIT" -C "$other" add -A
+  "$XFX_REAL_GIT" -C "$other" -c user.email=seed@example.invalid -c user.name=seed \
+    commit -qm "seed published formula" --allow-empty
+  "$XFX_REAL_GIT" -C "$other" push -q origin HEAD:master
+}
+published_digest() {
+  remote_formula | shasum -a 256 | awk '{print $1}'
+}
+
+sed '/^  version "/d' "$work/xfx-preview.rb" >"$work/no-version.rb"
+awk '{ print; if ($0 ~ /^  version "/) print }' "$work/xfx-preview.rb" >"$work/two-versions.rb"
+
+for broken in no-version two-versions; do
+  seed_remote_file "$work/$broken.rb"
+  before_digest="$(published_digest)"
+  publish_status=0
+  publish_step || publish_status=$?
+  [[ "$publish_status" -ne 0 ]] \
+    || fail "publish step accepted a published formula with a $broken problem"
+  [[ "$(published_digest)" == "$before_digest" ]] \
+    || fail "publish step rewrote a published formula with a $broken problem"
+done
+
+# The final release re-read must not be fooled by well-formed output followed by
+# junk: reading only the first document sees exactly the expected object.
+for trailer in \
+  '{"tagName":"decoy","isPrerelease":true} and then junk' \
+  '{"tagName":"decoy","isPrerelease":true}'; do
+  seed_remote 2000.01.01.000000.1.1
+  export XFX_STUB_VIEW_TRAILER="$trailer"
+  publish_status=0
+  publish_step || publish_status=$?
+  unset XFX_STUB_VIEW_TRAILER
+  [[ "$publish_status" -ne 0 ]] \
+    || fail "publish step accepted a release re-read carrying extra bytes: $trailer"
+  [[ "$(remote_version)" == "2000.01.01.000000.1.1" ]] \
+    || fail "publish step published from a release re-read it could not fully validate"
+done
 
 # A workspace left dirty by an earlier attempt, or by a reused self-hosted runner,
 # must not be read back as published state. The leftover has to be genuinely
