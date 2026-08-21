@@ -80,10 +80,19 @@ check(runs.include?("git/ref/tags/") && runs.include?(".object.type") && runs.in
 end
 check(runs.include?("sha256sum --check --strict SHA256SUMS"),
       "job does not verify the published checksums against the downloaded assets")
-check(runs.include?("expected_names") || runs.include?("exact SHA256SUMS"),
-      "job does not pin the SHA256SUMS entry set")
+# These two overlap with checks that a stubbed run can defeat first, so no single
+# input isolates them behaviourally; pin the comparisons themselves rather than
+# only the variable names around them.
+check(runs.include?('[[ "$actual_names" == "$expected_names" ]]'),
+      "job does not compare the SHA256SUMS entry set against the four contract assets")
+check(runs.include?(%q{[[ "$(jq -r '.tagName' <<<"$release")" == "$TAG" ]]}),
+      "job does not reconfirm that the re-read release is the tag it selected")
 check(runs.include?("preview_version_gt"),
       "job has no numeric freshness comparator")
+check(runs.include?("select_preview_release"),
+      "job has no enumerating preview-release selector")
+check(!runs.include?("createdAt"),
+      "job still orders preview releases by createdAt instead of the derived version")
 check(runs.include?("Formula/xfx-preview.rb.tmpl"),
       "job does not render from the tracked template")
 check(runs.include?("ruby -c Formula/xfx-preview.rb"),
@@ -102,6 +111,27 @@ RUBY
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/xfx-preview-contract.XXXXXX")"
 trap 'rm -rf "$work"' EXIT HUP INT TERM
+
+# ---------------------------------------------------------- release assets ---
+
+assets="$work/assets"
+mkdir -p "$assets"
+for asset in xfx-macos-aarch64 xfx-macos-x86_64 xfx-linux-aarch64 xfx-linux-x86_64; do
+  printf 'fake xfx preview payload for %s\n' "$asset" >"$assets/$asset"
+done
+(
+  cd "$assets"
+  shasum -a 256 \
+    xfx-macos-aarch64 xfx-macos-x86_64 xfx-linux-aarch64 xfx-linux-x86_64 \
+    >SHA256SUMS
+  shasum -a 256 --check --status SHA256SUMS
+) || fail "fabricated SHA256SUMS does not verify"
+export XFX_STUB_ASSETS="$assets"
+
+sha_of() {
+  awk -v name="$1" '{ file = $2; sub(/^\*/, "", file); if (file == name) print $1 }' \
+    "$assets/SHA256SUMS"
+}
 
 # ------------------------------------------------- freshness guard behaviour --
 
@@ -138,36 +168,361 @@ not_newer "2026.08.22.054213.32601234567.1" "2026.08.22.054213.32601234567.2"
 # Leading-zero clock fields must compare as decimal, not octal.
 newer "2026.08.22.094213.32601234567.1" "2026.08.22.084213.32601234567.1"
 
-# ----------------------------------------------------------------- rendering --
+# The comparator only matters if the job actually applies it to the tracked
+# formula, so exercise the decision the caller delegates to.
+awk '/^preview_bump_needed\(\) \{$/, /^\}$/' "$work/xfx-job.sh" >"$work/bump-needed.sh"
+[[ -s "$work/bump-needed.sh" ]] \
+  || fail "the shipped preview_bump_needed() function could not be extracted"
+# shellcheck source=/dev/null
+source "$work/bump-needed.sh"
 
-assets="$work/assets"
-mkdir -p "$assets"
-for asset in xfx-macos-aarch64 xfx-macos-x86_64 xfx-linux-aarch64 xfx-linux-x86_64; do
-  printf 'fake xfx preview payload for %s\n' "$asset" >"$assets/$asset"
+bump_decision() {
+  local status=0
+  preview_bump_needed "$1" "$2" 2>/dev/null || status=$?
+  echo "$status"
+}
+[[ "$(bump_decision "$version" "")" == "0" ]] \
+  || fail "no-downgrade guard refuses the first render when no formula exists yet"
+[[ "$(bump_decision "$version" "2026.08.22.054212.32601234567.1")" == "0" ]] \
+  || fail "no-downgrade guard refuses a strictly newer build"
+[[ "$(bump_decision "$version" "$version")" == "1" ]] \
+  || fail "no-downgrade guard re-renders the version already in the formula"
+[[ "$(bump_decision "$version" "2026.08.22.054214.32601234567.1")" == "1" ]] \
+  || fail "no-downgrade guard would replace a newer formula with an older build"
+[[ "$(bump_decision "$version" "2026.08.22.054213.32601234567.2")" == "1" ]] \
+  || fail "no-downgrade guard ignores the run attempt already in the formula"
+[[ "$(bump_decision "$version" "preview-2026-08-22")" == "2" ]] \
+  || fail "no-downgrade guard clobbers a formula whose version it cannot read"
+
+# -------------------------------------------------- release selection --------
+
+# The backstop must pick the highest *valid* preview build, not the most recently
+# created release. A release recreated later with an older stamp, or a malformed
+# tag published after a good one, would otherwise pin the tap stale forever.
+awk '/^select_preview_release\(\) \{$/, /^\}$/' "$work/xfx-job.sh" >"$work/select.sh"
+[[ -s "$work/select.sh" ]] \
+  || fail "the shipped select_preview_release() function could not be extracted"
+# shellcheck source=/dev/null
+source "$work/select.sh"
+
+stub_bin="$work/gh-stub"
+mkdir -p "$stub_bin" "$work/refs"
+export XFX_STUB_REFS="$work/refs"
+cat >"$stub_bin/gh" <<'STUB'
+#!/bin/bash
+# Offline stand-in for the GitHub CLI. It answers only the calls the shipped job
+# makes, and refuses anything else so a silently changed call site is visible.
+subcommand="${1:-}"
+action="${2:-}"
+pattern=""
+output=""
+target=""
+[ "$#" -ge 2 ] && shift 2 || shift $#
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --pattern) pattern="${2:-}"; shift 2 ;;
+    --output) output="${2:-}"; shift 2 ;;
+    --clobber) shift ;;
+    --limit|--json|--jq|--repo) shift 2 ;;
+    -*) shift ;;
+    *)
+      if [ -z "$target" ]; then target="$1"; fi
+      shift
+      ;;
+  esac
 done
-(
-  cd "$assets"
-  shasum -a 256 \
-    xfx-macos-aarch64 xfx-macos-x86_64 xfx-linux-aarch64 xfx-linux-x86_64 \
-    >SHA256SUMS
-  shasum -a 256 --check --status SHA256SUMS
-) || fail "fabricated SHA256SUMS does not verify"
+case "$subcommand" in
+  release)
+    case "$action" in
+      list)
+        cat "$XFX_STUB_RELEASES"
+        ;;
+      view)
+        # A separate view fixture lets a test model a release that was edited
+        # between the listing and the direct re-read.
+        jq -c --arg tag "$target" \
+          '[.[] | select(.tagName == $tag)] | first | {tagName, isPrerelease}' \
+          "${XFX_STUB_VIEW:-$XFX_STUB_RELEASES}"
+        ;;
+      download)
+        if [ -f "$XFX_STUB_ASSETS/$pattern" ]; then
+          cp "$XFX_STUB_ASSETS/$pattern" "$output"
+        else
+          echo "gh: no asset $pattern in $target" >&2
+          exit 1
+        fi
+        ;;
+      *)
+        echo "unexpected gh release $action" >&2
+        exit 9
+        ;;
+    esac
+    ;;
+  api)
+    ref="$XFX_STUB_REFS/${action##*/}.json"
+    if [ -f "$ref" ]; then cat "$ref"; else echo "gh: 404 $action" >&2; exit 1; fi
+    ;;
+  *)
+    echo "unexpected gh $subcommand" >&2
+    exit 9
+    ;;
+esac
+STUB
+chmod 0755 "$stub_bin/gh"
 
-sha_of() {
-  awk -v name="$1" '{ file = $2; sub(/^\*/, "", file); if (file == name) print $1 }' \
-    "$assets/SHA256SUMS"
+ref_json() {
+  printf '{"ref":"refs/tags/%s","object":{"type":"%s","sha":"%s"}}\n' "$1" "$2" "$3" \
+    >"$work/refs/$1.json"
 }
 
+# One valid but older build whose release was created *after* the winner.
+decoy_tag="preview-2026-08-20-101010-32500000000-1-aaaaaaaaaaaa"
+# Every remaining candidate is invalid, and each carries a later stamp than the
+# winner so a naive "newest wins" selector would take it.
+malformed_tag="preview-2026-08-24-0900-32700000000-1-cccccccccccc"
+unreleased_tag="preview-2026-08-25-000000-32800000000-1-dddddddddddd"
+missing_ref_tag="preview-2026-08-26-000000-32900000000-1-eeeeeeeeeeee"
+sha_mismatch_tag="preview-2026-08-27-000000-33000000000-1-ffffffffffff"
+annotated_tag="preview-2026-08-28-000000-33100000000-1-111111111111"
+
+ref_json "$tag" commit "$source_sha"
+ref_json "$decoy_tag" commit "aaaaaaaaaaaabcdef0123456789abcdef0123456"
+ref_json "$malformed_tag" commit "ccccccccccccbcdef0123456789abcdef0123456"
+ref_json "$unreleased_tag" commit "ddddddddddddbcdef0123456789abcdef0123456"
+ref_json "$sha_mismatch_tag" commit "0000000000000000000000000000000000000000"
+ref_json "$annotated_tag" tag "1111111111111111111111111111111111111111"
+# missing_ref_tag deliberately has no git ref at all.
+
+# Winner last, so "first valid candidate wins" is excluded too.
+cat >"$work/releases-mixed.json" <<JSON
+[
+  {"tagName": "v0.1.0", "isPrerelease": false, "createdAt": "2026-09-01T00:00:00Z"},
+  {"tagName": "$malformed_tag", "isPrerelease": true, "createdAt": "2026-08-31T00:00:00Z"},
+  {"tagName": "$decoy_tag", "isPrerelease": true, "createdAt": "2026-08-30T00:00:00Z"},
+  {"tagName": "$annotated_tag", "isPrerelease": true, "createdAt": "2026-08-29T00:00:00Z"},
+  {"tagName": "$sha_mismatch_tag", "isPrerelease": true, "createdAt": "2026-08-28T00:00:00Z"},
+  {"tagName": "$missing_ref_tag", "isPrerelease": true, "createdAt": "2026-08-27T00:00:00Z"},
+  {"tagName": "$unreleased_tag", "isPrerelease": false, "createdAt": "2026-08-26T00:00:00Z"},
+  {"tagName": "$tag", "isPrerelease": true, "createdAt": "2026-08-21T00:00:00Z"}
+]
+JSON
+
+# Winner first, so "last valid candidate wins" is excluded as well; createdAt
+# order is the exact inverse of numeric version order.
+cat >"$work/releases-createdat.json" <<JSON
+[
+  {"tagName": "$tag", "isPrerelease": true, "createdAt": "2026-08-21T00:00:00Z"},
+  {"tagName": "$decoy_tag", "isPrerelease": true, "createdAt": "2026-08-30T00:00:00Z"}
+]
+JSON
+
+cat >"$work/releases-none-valid.json" <<JSON
+[
+  {"tagName": "$malformed_tag", "isPrerelease": true, "createdAt": "2026-08-31T00:00:00Z"},
+  {"tagName": "$annotated_tag", "isPrerelease": true, "createdAt": "2026-08-29T00:00:00Z"},
+  {"tagName": "$sha_mismatch_tag", "isPrerelease": true, "createdAt": "2026-08-28T00:00:00Z"},
+  {"tagName": "$missing_ref_tag", "isPrerelease": true, "createdAt": "2026-08-27T00:00:00Z"},
+  {"tagName": "$unreleased_tag", "isPrerelease": false, "createdAt": "2026-08-26T00:00:00Z"}
+]
+JSON
+
+cat >"$work/releases-none.json" <<JSON
+[
+  {"tagName": "v0.1.0", "isPrerelease": false, "createdAt": "2026-09-01T00:00:00Z"}
+]
+JSON
+
+# Isolates the tag-ref check: this candidate is a well-formed preview prerelease
+# and would win outright if the job did not insist the tag actually exists.
+cat >"$work/releases-only-missing-ref.json" <<JSON
+[
+  {"tagName": "$missing_ref_tag", "isPrerelease": true, "createdAt": "2026-08-27T00:00:00Z"}
+]
+JSON
+
+select_with() {
+  local fixture="$work/releases-$1.json"
+  hash -r
+  XFX_STUB_RELEASES="$fixture" PATH="$stub_bin:$PATH" \
+    select_preview_release 2>"$work/select.err"
+}
+
+expected_selection="$(printf '%s\t%s\t%s' "$tag" "$version" "$source_sha")"
+
+selection="$(select_with mixed)" \
+  || fail "selector rejected a list that contains one fully valid candidate"
+[[ "$selection" == "$expected_selection" ]] \
+  || fail "selector chose $(printf '%q' "$selection"), expected $(printf '%q' "$expected_selection")"
+for skipped in \
+  "$malformed_tag" "$unreleased_tag" "$missing_ref_tag" "$sha_mismatch_tag" "$annotated_tag"; do
+  grep -Fq "$skipped" "$work/select.err" \
+    || fail "selector silently dropped an invalid candidate: $skipped"
+done
+if grep -Fq "$decoy_tag" "$work/select.err"; then
+  fail "selector rejected the valid older candidate instead of ranking it"
+fi
+
+selection="$(select_with createdat)" \
+  || fail "selector rejected a list of two valid candidates"
+[[ "$selection" == "$expected_selection" ]] \
+  || fail "selector followed createdAt instead of the derived version: got $(printf '%q' "$selection")"
+
+selection_status=0
+select_with none-valid >/dev/null || selection_status=$?
+[[ "$selection_status" -eq 2 ]] \
+  || fail "selector did not fail explicitly when every candidate is invalid (exit $selection_status)"
+
+selection_status=0
+select_with none >/dev/null || selection_status=$?
+[[ "$selection_status" -eq 1 ]] \
+  || fail "selector did not report 'no preview candidate' as a no-op (exit $selection_status)"
+
+selection_status=0
+select_with only-missing-ref >/dev/null || selection_status=$?
+[[ "$selection_status" -eq 2 ]] \
+  || fail "selector accepted a preview tag that resolves to no commit (exit $selection_status)"
+
+# ------------------------------------------------- render step, end to end --
+
+# Run the shipped render step itself against the stubbed release, so the formula
+# under test is produced by the workflow's own code rather than by a copy of it,
+# and so the caller's wiring (not just its helper functions) is exercised.
+ruby -ryaml - "$workflow" >"$work/render-step.sh" <<'RUBY'
+document = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)
+job = document.fetch("jobs").fetch("bump-xfx-preview")
+step = job.fetch("steps").find { |candidate| candidate.fetch("run", "").include?("select_preview_release") }
+raise "xfx preview tap contract: no render step invokes select_preview_release" if step.nil?
+
+print step.fetch("run")
+RUBY
+
+repo="$work/repo"
+mkdir -p "$repo/Formula"
+cp "$template" "$repo/Formula/xfx-preview.rb.tmpl"
+
+render_step() {
+  local assets_dir="${1:-$assets}"
+  local view_fixture="${2:-$work/releases-mixed.json}"
+  rm -f "$work/render.out"
+  (
+    cd "$repo"
+    hash -r
+    XFX_STUB_RELEASES="$work/releases-mixed.json" \
+    XFX_STUB_VIEW="$view_fixture" \
+    XFX_STUB_ASSETS="$assets_dir" \
+    PATH="$stub_bin:$PATH" \
+      bash "$work/render-step.sh"
+  ) >"$work/render.out" 2>&1
+}
+
+render_status=0
+render_step || render_status=$?
+[[ "$render_status" -eq 0 ]] \
+  || fail "render step failed on a valid release: $(cat "$work/render.out")"
+
+formula="$repo/Formula/xfx-preview.rb"
+[[ -f "$formula" ]] || fail "render step produced no Formula/xfx-preview.rb"
+
+# The step must render the *selected* build, not whichever release came last.
+grep -Fq "version \"$version\"" "$formula" \
+  || fail "render step pinned the wrong version: $(sed -n 's/^  version "\(.*\)"$/\1/p' "$formula")"
+for asset in xfx-macos-aarch64 xfx-macos-x86_64 xfx-linux-aarch64 xfx-linux-x86_64; do
+  grep -Fq "releases/download/$tag/$asset" "$formula" \
+    || fail "render step did not pin the exact-tag URL for $asset"
+  grep -Fq "sha256 \"$(sha_of "$asset")\"" "$formula" \
+    || fail "render step did not pin the published checksum for $asset"
+done
+# Keep this good render for the formula-level assertions further down; the
+# freshness cases below deliberately leave the repository copy in other states.
+cp "$formula" "$work/xfx-preview.rb"
+
+# Freshness, through the caller rather than the helper: a newer formula must
+# survive untouched, an older one must be replaced, an unreadable one must stop
+# the job instead of being clobbered.
+fresher="$work/fresher.rb"
+sed 's/^  version ".*"$/  version "2999.01.01.000000.1.1"/' "$formula" >"$fresher"
+cp "$fresher" "$repo/Formula/xfx-preview.rb"
+render_status=0
+render_step || render_status=$?
+[[ "$render_status" -eq 0 ]] \
+  || fail "render step failed instead of no-opping on an already-newer formula"
+cmp -s "$fresher" "$repo/Formula/xfx-preview.rb" \
+  || fail "render step downgraded a newer formula to $version"
+grep -Fq "refusing to replace" "$work/render.out" \
+  || fail "render step replaced a newer formula without saying so"
+
+sed 's/^  version ".*"$/  version "2000.01.01.000000.1.1"/' "$formula" >"$repo/Formula/xfx-preview.rb"
+render_status=0
+render_step || render_status=$?
+[[ "$render_status" -eq 0 ]] \
+  || fail "render step failed on a legitimately stale formula"
+grep -Fq "version \"$version\"" "$repo/Formula/xfx-preview.rb" \
+  || fail "render step left a stale formula in place"
+
+sed 's/^  version ".*"$/  version "preview-2026-08-22"/' "$formula" >"$work/unreadable.rb"
+cp "$work/unreadable.rb" "$repo/Formula/xfx-preview.rb"
+render_status=0
+render_step || render_status=$?
+[[ "$render_status" -ne 0 ]] \
+  || fail "render step accepted a formula whose version it cannot read"
+cmp -s "$work/unreadable.rb" "$repo/Formula/xfx-preview.rb" \
+  || fail "render step clobbered a formula whose version it cannot read"
+
+# A published SHA256SUMS that does not describe exactly the four contract assets,
+# or that disagrees with the bytes it names, must stop the job before the formula
+# is rewritten.
+mkdir -p "$work/assets-extra" "$work/assets-missing" "$work/assets-tampered"
+cp "$assets"/xfx-* "$work/assets-extra/"
+printf 'an asset the contract does not allow\n' >"$work/assets-extra/xfx-macos-arm64e"
+(
+  cd "$work/assets-extra"
+  shasum -a 256 xfx-macos-aarch64 xfx-macos-x86_64 xfx-linux-aarch64 xfx-linux-x86_64 \
+    xfx-macos-arm64e >SHA256SUMS
+)
+cp "$assets"/xfx-* "$work/assets-missing/"
+# Three correct entries: `sha256sum --check` alone is happy, only the entry-set
+# pin can catch this one.
+(
+  cd "$work/assets-missing"
+  shasum -a 256 xfx-macos-aarch64 xfx-macos-x86_64 xfx-linux-aarch64 >SHA256SUMS
+)
+cp "$assets"/xfx-* "$work/assets-tampered/"
+(
+  cd "$work/assets-tampered"
+  shasum -a 256 xfx-macos-aarch64 xfx-macos-x86_64 xfx-linux-aarch64 xfx-linux-x86_64 >SHA256SUMS
+)
+printf 'swapped payload the published sum does not cover\n' \
+  >"$work/assets-tampered/xfx-linux-x86_64"
+
+sums_case() {
+  local variant="$1" why="$2" status=0
+  sed 's/^  version ".*"$/  version "2000.01.01.000000.1.1"/' "$work/xfx-preview.rb" \
+    >"$repo/Formula/xfx-preview.rb"
+  cp "$repo/Formula/xfx-preview.rb" "$work/stale-seed.rb"
+  render_step "$work/$variant" || status=$?
+  [[ "$status" -ne 0 ]] || fail "render step accepted $why"
+  cmp -s "$work/stale-seed.rb" "$repo/Formula/xfx-preview.rb" \
+    || fail "render step rewrote the formula from $why"
+}
+sums_case assets-extra "a SHA256SUMS carrying an asset outside the contract"
+sums_case assets-missing "a SHA256SUMS that omits a contract asset"
+sums_case assets-tampered "assets whose bytes disagree with the published SHA256SUMS"
+
+# The direct re-read of the chosen release is the last chance to notice that it
+# stopped being a prerelease after it was listed.
+jq '[.[] | if .tagName == $tag then .isPrerelease = false else . end]' \
+  --arg tag "$tag" "$work/releases-mixed.json" >"$work/releases-demoted.json"
+sed 's/^  version ".*"$/  version "2000.01.01.000000.1.1"/' "$work/xfx-preview.rb" \
+  >"$repo/Formula/xfx-preview.rb"
+cp "$repo/Formula/xfx-preview.rb" "$work/stale-seed.rb"
+render_status=0
+render_step "$assets" "$work/releases-demoted.json" || render_status=$?
+[[ "$render_status" -ne 0 ]] \
+  || fail "render step pinned a release that is no longer a prerelease"
+cmp -s "$work/stale-seed.rb" "$repo/Formula/xfx-preview.rb" \
+  || fail "render step rewrote the formula from a release that is no longer a prerelease"
+
 formula="$work/xfx-preview.rb"
-sed -e "s/@VERSION@/$version/g" \
-    -e "s/@TAG@/$tag/g" \
-    -e "s/@SOURCE_SHA@/$source_sha/g" \
-    -e "s/@SOURCE_SHA12@/$source_sha12/g" \
-    -e "s/@SHA_MACOS_AARCH64@/$(sha_of xfx-macos-aarch64)/" \
-    -e "s/@SHA_MACOS_X86_64@/$(sha_of xfx-macos-x86_64)/" \
-    -e "s/@SHA_LINUX_AARCH64@/$(sha_of xfx-linux-aarch64)/" \
-    -e "s/@SHA_LINUX_X86_64@/$(sha_of xfx-linux-x86_64)/" \
-    "$template" >"$formula"
 
 ruby -c "$formula" >/dev/null || fail "rendered formula is not valid Ruby"
 if grep -q '@[A-Z0-9_]*@' "$formula"; then

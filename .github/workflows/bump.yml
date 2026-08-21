@@ -463,6 +463,17 @@ jobs:
           # has to converge within six hours when that direct push is skipped or
           # fails. It deliberately carries no `needs:` — a broken llmux or dbotter
           # bump must not keep the xfx preview formula stale.
+          #
+          # Every assertion below is written `<condition> || die "why"` rather than as
+          # a bare `[[ ... ]]`: bash 3.2 does NOT apply `set -e` to a failing `[[ ]]`
+          # (fixed in 4.1), so a bare conditional silently passes when this step is
+          # replayed on macOS by scripts/test-xfx-preview-contract.sh, and a genuine
+          # regression would then be invisible until it reached the runner.
+          die() {
+            echo "$*" >&2
+            exit 1
+          }
+
           preview_version_gt() {
             # Exit 0 when $1 is strictly newer than $2, comparing dot-separated
             # decimal fields (YYYY.MM.DD.HHMMSS.run_id.attempt). The tap must never
@@ -484,41 +495,123 @@ jobs:
             return 1
           }
 
-          TAG=$(gh release list --repo 2lab-ai/xfx --limit 100 \
-            --json tagName,isPrerelease,createdAt \
-            --jq '[.[] | select(.isPrerelease and (.tagName | startswith("preview-")))] | sort_by(.createdAt) | last | .tagName // empty')
-          if [ -z "$TAG" ]; then
+          preview_bump_needed() {
+            # Exit 0 when the selected version $1 may replace the formula's current
+            # version $2 (empty = no formula yet). Exit 1 = same or older, a no-op.
+            # Exit 2 = the tracked formula carries a version this job cannot read,
+            # in which case it must fail rather than clobber it.
+            local candidate="${1:?candidate version required}" current="${2-}"
+            [ -n "$current" ] || return 0
+            if ! [[ "$current" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+              echo "existing xfx-preview version is unreadable: $current" >&2
+              return 2
+            fi
+            preview_version_gt "$candidate" "$current"
+          }
+
+          select_preview_release() {
+            # Print "<tag>\t<version>\t<source_sha>" for the highest *valid* preview
+            # prerelease. Exit 1 = no preview-* candidate at all (a no-op, not an
+            # error); exit 2 = candidates existed but none survived validation.
+            #
+            # Selection is by derived numeric version, never by release creation
+            # time: a release recreated later with an older stamp, or a malformed
+            # tag published after a good one, would otherwise pin this backstop
+            # stale indefinitely. Every candidate is validated BEFORE it can win, so
+            # an invalid tag never becomes a ranking candidate; each rejection is
+            # reported on stderr rather than swallowed.
+            local releases candidates tag prerelease version sha12
+            local ref object_type source_sha
+            local best_tag="" best_version="" best_sha="" seen=0
+            releases=$(gh release list --repo 2lab-ai/xfx --limit 100 \
+              --json tagName,isPrerelease)
+            candidates=$(printf '%s' "$releases" | jq -r \
+              '.[] | select(.tagName | startswith("preview-")) | [.tagName, (.isPrerelease | tostring)] | @tsv')
+            [ -n "$candidates" ] || return 1
+            while IFS=$'\t' read -r tag prerelease; do
+              [ -n "$tag" ] || continue
+              seen=$((seen + 1))
+              if [ "$prerelease" != "true" ]; then
+                echo "skipping $tag: release is not a prerelease" >&2
+                continue
+              fi
+              # preview-YYYY-MM-DD-HHMMSS-<run_id>-<attempt>-<sha12>
+              if ! [[ "$tag" =~ ^preview-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{6})-([1-9][0-9]*)-([1-9][0-9]*)-([0-9a-f]{12})$ ]]; then
+                echo "skipping $tag: tag does not match the xfx preview contract" >&2
+                continue
+              fi
+              version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.${BASH_REMATCH[4]}.${BASH_REMATCH[5]}.${BASH_REMATCH[6]}"
+              sha12="${BASH_REMATCH[7]}"
+              if ! ref=$(gh api "repos/2lab-ai/xfx/git/ref/tags/$tag" 2>/dev/null); then
+                echo "skipping $tag: no such git tag ref" >&2
+                continue
+              fi
+              object_type=$(printf '%s' "$ref" | jq -r '.object.type')
+              source_sha=$(printf '%s' "$ref" | jq -r '.object.sha')
+              if [ "$object_type" != "commit" ]; then
+                echo "skipping $tag: tag object is $object_type, not a commit" >&2
+                continue
+              fi
+              if ! [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "skipping $tag: tag does not resolve to a commit sha" >&2
+                continue
+              fi
+              if [ "${source_sha:0:12}" != "$sha12" ]; then
+                echo "skipping $tag: tag sha12 $sha12 does not match source $source_sha" >&2
+                continue
+              fi
+              if [ -z "$best_version" ] || preview_version_gt "$version" "$best_version"; then
+                best_tag="$tag"
+                best_version="$version"
+                best_sha="$source_sha"
+              fi
+            done <<<"$candidates"
+            [ "$seen" -gt 0 ] || return 1
+            [ -n "$best_tag" ] || return 2
+            printf '%s\t%s\t%s\n' "$best_tag" "$best_version" "$best_sha"
+          }
+
+          selection=""
+          selection_status=0
+          selection=$(select_preview_release) || selection_status=$?
+          if [ "$selection_status" -eq 1 ]; then
             echo "no xfx preview prerelease yet"
             exit 0
           fi
-          # preview-YYYY-MM-DD-HHMMSS-<run_id>-<attempt>-<sha12>
-          if ! [[ "$TAG" =~ ^preview-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{6})-([1-9][0-9]*)-([1-9][0-9]*)-([0-9a-f]{12})$ ]]; then
-            echo "tag does not match the xfx preview contract: $TAG" >&2
+          if [ "$selection_status" -ne 0 ]; then
+            echo "no xfx preview prerelease survived validation" >&2
             exit 1
           fi
-          VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.${BASH_REMATCH[4]}.${BASH_REMATCH[5]}.${BASH_REMATCH[6]}"
+          IFS=$'\t' read -r TAG VERSION SOURCE_SHA <<<"$selection"
+          [[ "$TAG" =~ ^preview-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{6})-([1-9][0-9]*)-([1-9][0-9]*)-([0-9a-f]{12})$ ]] \
+            || die "selected tag does not match the xfx preview contract: $TAG"
+          [[ "$VERSION" == "${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.${BASH_REMATCH[4]}.${BASH_REMATCH[5]}.${BASH_REMATCH[6]}" ]] \
+            || die "selected version $VERSION was not derived from tag $TAG"
           TAG_SHA12="${BASH_REMATCH[7]}"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || die "selected source commit is not a 40-hex sha: $SOURCE_SHA"
+          [[ "${SOURCE_SHA:0:12}" == "$TAG_SHA12" ]] \
+            || die "tag sha12 $TAG_SHA12 does not match source $SOURCE_SHA"
 
           CURRENT=$(sed -n 's/^  version "\(.*\)"$/\1/p' Formula/xfx-preview.rb 2>/dev/null | head -1 || true)
-          if [ -n "${CURRENT:-}" ]; then
-            if ! [[ "$CURRENT" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
-              echo "existing xfx-preview version is unreadable: $CURRENT" >&2
-              exit 1
-            fi
-            if ! preview_version_gt "$VERSION" "$CURRENT"; then
-              echo "formula already at $CURRENT; refusing to replace it with $VERSION"
-              exit 0
-            fi
+          bump_status=0
+          preview_bump_needed "$VERSION" "${CURRENT:-}" || bump_status=$?
+          if [ "$bump_status" -eq 1 ]; then
+            echo "formula already at $CURRENT; refusing to replace it with $VERSION"
+            exit 0
+          fi
+          if [ "$bump_status" -ne 0 ]; then
+            exit 1
           fi
 
+          # The winner already passed grammar, prerelease and tag-object validation
+          # during selection; re-read the release directly as a final confirmation
+          # that the exact tag we are about to pin is still the prerelease we chose.
           release=$(gh release view "$TAG" --repo 2lab-ai/xfx --json tagName,isPrerelease)
-          [[ "$(jq -r '.tagName' <<<"$release")" == "$TAG" ]]
-          [[ "$(jq -r '.isPrerelease' <<<"$release")" == "true" ]]
-          ref=$(gh api "repos/2lab-ai/xfx/git/ref/tags/$TAG")
-          [[ "$(jq -r '.object.type' <<<"$ref")" == "commit" ]]
-          SOURCE_SHA=$(jq -r '.object.sha' <<<"$ref")
-          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "${SOURCE_SHA:0:12}" == "$TAG_SHA12" ]]
+          [[ "$(jq -r '.tagName' <<<"$release")" == "$TAG" ]] \
+            || die "release lookup returned a different tag than $TAG"
+          [[ "$(jq -r '.isPrerelease' <<<"$release")" == "true" ]] \
+            || die "$TAG is no longer a prerelease"
 
           assets=$(mktemp -d)
           trap 'rm -rf "$assets"' EXIT HUP INT TERM
@@ -532,23 +625,36 @@ jobs:
           # entry must match the bytes that were actually published.
           expected_names=$(printf '%s\n' xfx-linux-aarch64 xfx-linux-x86_64 xfx-macos-aarch64 xfx-macos-x86_64)
           actual_names=$(awk '{ file = $2; sub(/^\*/, "", file); print file }' "$assets/SHA256SUMS" | sort)
-          [[ "$actual_names" == "$expected_names" ]]
-          ( cd "$assets" && sha256sum --check --strict SHA256SUMS )
+          [[ "$actual_names" == "$expected_names" ]] \
+            || die "SHA256SUMS does not describe exactly the four contract assets: $actual_names"
+          ( cd "$assets" && sha256sum --check --strict SHA256SUMS ) \
+            || die "published assets do not match their published checksums"
 
-          declare -A SHAS
-          for asset in xfx-macos-aarch64 xfx-macos-x86_64 xfx-linux-aarch64 xfx-linux-x86_64; do
-            SHAS[$asset]=$(awk -v name="$asset" '{ file = $2; sub(/^\*/, "", file); if (file == name) print $1 }' "$assets/SHA256SUMS")
-            [[ "${SHAS[$asset]}" =~ ^[0-9a-f]{64}$ ]]
+          # No associative array here on purpose: this whole step is executed
+          # verbatim by scripts/test-xfx-preview-contract.sh, and `declare -A`
+          # would make it unrunnable on the bash 3.2 that ships with macOS.
+          published_sha256() {
+            awk -v name="${1:?asset required}" \
+              '{ file = $2; sub(/^\*/, "", file); if (file == name) print $1 }' \
+              "$assets/SHA256SUMS"
+          }
+          SHA_MACOS_AARCH64=$(published_sha256 xfx-macos-aarch64)
+          SHA_MACOS_X86_64=$(published_sha256 xfx-macos-x86_64)
+          SHA_LINUX_AARCH64=$(published_sha256 xfx-linux-aarch64)
+          SHA_LINUX_X86_64=$(published_sha256 xfx-linux-x86_64)
+          for sha in "$SHA_MACOS_AARCH64" "$SHA_MACOS_X86_64" "$SHA_LINUX_AARCH64" "$SHA_LINUX_X86_64"; do
+            [[ "$sha" =~ ^[0-9a-f]{64}$ ]] \
+              || die "SHA256SUMS did not yield a sha-256 digest for every contract asset"
           done
 
           sed -e "s/@VERSION@/$VERSION/g" \
               -e "s/@TAG@/$TAG/g" \
               -e "s/@SOURCE_SHA@/$SOURCE_SHA/g" \
               -e "s/@SOURCE_SHA12@/$TAG_SHA12/g" \
-              -e "s/@SHA_MACOS_AARCH64@/${SHAS[xfx-macos-aarch64]}/" \
-              -e "s/@SHA_MACOS_X86_64@/${SHAS[xfx-macos-x86_64]}/" \
-              -e "s/@SHA_LINUX_AARCH64@/${SHAS[xfx-linux-aarch64]}/" \
-              -e "s/@SHA_LINUX_X86_64@/${SHAS[xfx-linux-x86_64]}/" \
+              -e "s/@SHA_MACOS_AARCH64@/$SHA_MACOS_AARCH64/" \
+              -e "s/@SHA_MACOS_X86_64@/$SHA_MACOS_X86_64/" \
+              -e "s/@SHA_LINUX_AARCH64@/$SHA_LINUX_AARCH64/" \
+              -e "s/@SHA_LINUX_X86_64@/$SHA_LINUX_X86_64/" \
               Formula/xfx-preview.rb.tmpl > Formula/xfx-preview.rb
 
           ruby -c Formula/xfx-preview.rb
