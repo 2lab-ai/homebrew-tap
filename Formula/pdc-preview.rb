@@ -18,11 +18,14 @@ class PdcPreview < Formula
 
   def install
     system "cargo", "install", "--bin", "pdc", *std_cargo_args
-    mv bin/"pdc", bin/"pdc-preview"
 
-    # Same prefix, so `pdc-preview` finds ../share/palladium/runtime exactly the
-    # way the stable formula's binary does.
-    (share/"palladium").install "runtime"
+    # libexec is not symlinked into the prefix, so this copy of the runtime
+    # cannot collide with the stable channel's copy of the same filenames.
+    # The wrapper points this binary at its own.
+    (libexec/"palladium").install "runtime"
+    (libexec/"bin").install bin/"pdc"
+    bin.write_env_script libexec/"bin/pdc", "pdc-preview",
+                         PALLADIUM_RUNTIME: libexec/"palladium/runtime"
   end
 
   def caveats
