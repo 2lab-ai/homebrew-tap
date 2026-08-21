@@ -99,8 +99,20 @@ check(runs.include?("ruby -c Formula/xfx-preview.rb"),
       "job does not syntax-check the rendered formula")
 check(runs.match?(/grep .*@\[A-Z0-9_\]/),
       "job does not reject unrendered placeholders")
-check(runs.include?("git pull --rebase") && runs.include?("git push"),
-      "job does not rebase and push the bump")
+# The source repository writes this same formula from a separate concurrency
+# group, so publishing must survive a lost race. Re-deriving from the winning
+# remote state beats rebasing: the only file that can conflict is the formula and
+# the correct resolution is always "re-read freshness, then re-render".
+check(runs.include?("git fetch origin master"),
+      "job does not re-read master before publishing")
+check(runs.include?("git reset --hard FETCH_HEAD"),
+      "job does not re-derive from the winning remote state")
+check(runs.include?("git push origin HEAD:master"),
+      "job does not push the bump")
+check(!runs.include?("git pull --rebase"),
+      "job still resolves a lost push race by rebasing")
+check(runs.match?(/for attempt in 1 2 3/),
+      "job does not bound its publish retries")
 
 template_placeholders = File.read(template).scan(/@[A-Z0-9_]+@/).uniq.sort
 workflow_placeholders = runs.scan(/@[A-Z0-9_]+@/).uniq.sort
@@ -235,6 +247,15 @@ case "$subcommand" in
   release)
     case "$action" in
       list)
+        # A failed or unreadable listing must never look like "no releases yet".
+        if [ -n "${XFX_STUB_LIST_STATUS:-}" ]; then
+          echo "gh: could not reach api.github.com" >&2
+          exit "$XFX_STUB_LIST_STATUS"
+        fi
+        if [ -n "${XFX_STUB_LIST_GARBAGE:-}" ]; then
+          printf '%s\n' "$XFX_STUB_LIST_GARBAGE"
+          exit 0
+        fi
         cat "$XFX_STUB_RELEASES"
         ;;
       view)
@@ -347,6 +368,18 @@ select_with() {
     select_preview_release 2>"$work/select.err"
 }
 
+# A failing query must be an error, never the "nothing published yet" no-op: the
+# selector runs inside a guarded command substitution, so `set -e` does not abort
+# it and an unchecked failure would silently degrade to "no candidates".
+select_with_broken_list() {
+  hash -r
+  XFX_STUB_RELEASES="$work/releases-mixed.json" \
+  XFX_STUB_LIST_STATUS="${1:-}" \
+  XFX_STUB_LIST_GARBAGE="${2:-}" \
+  PATH="$stub_bin:$PATH" \
+    select_preview_release 2>"$work/select.err"
+}
+
 expected_selection="$(printf '%s\t%s\t%s' "$tag" "$version" "$source_sha")"
 
 selection="$(select_with mixed)" \
@@ -382,6 +415,21 @@ select_with only-missing-ref >/dev/null || selection_status=$?
 [[ "$selection_status" -eq 2 ]] \
   || fail "selector accepted a preview tag that resolves to no commit (exit $selection_status)"
 
+selection_status=0
+select_with_broken_list 17 "" >/dev/null || selection_status=$?
+[[ "$selection_status" -eq 2 ]] \
+  || fail "a failed release query reports $selection_status, not an error (2); exit 1 means the job silently no-ops on an API outage"
+
+selection_status=0
+select_with_broken_list "" 'not json at all' >/dev/null || selection_status=$?
+[[ "$selection_status" -eq 2 ]] \
+  || fail "an unparseable release listing reports $selection_status, not an error (2)"
+
+selection_status=0
+select_with_broken_list "" '{"message":"Not Found"}' >/dev/null || selection_status=$?
+[[ "$selection_status" -eq 2 ]] \
+  || fail "a non-array release listing reports $selection_status, not an error (2)"
+
 # ------------------------------------------------- render step, end to end --
 
 # Run the shipped render step itself against the stubbed release, so the formula
@@ -396,77 +444,267 @@ raise "xfx preview tap contract: no render step invokes select_preview_release" 
 print step.fetch("run")
 RUBY
 
+XFX_REAL_GIT="$(command -v git)"
+export XFX_REAL_GIT
+
+remote="$work/remote.git"
 repo="$work/repo"
+other="$work/other"
+"$XFX_REAL_GIT" init -q --bare "$remote"
+"$XFX_REAL_GIT" -C "$remote" symbolic-ref HEAD refs/heads/master
+"$XFX_REAL_GIT" clone -q "$remote" "$repo" 2>/dev/null
 mkdir -p "$repo/Formula"
 cp "$template" "$repo/Formula/xfx-preview.rb.tmpl"
+printf 'scratch tap\n' >"$repo/README.md"
+"$XFX_REAL_GIT" -C "$repo" add -A
+"$XFX_REAL_GIT" -C "$repo" -c user.email=seed@example.invalid -c user.name=seed \
+  commit -qm "seed"
+"$XFX_REAL_GIT" -C "$repo" push -q origin HEAD:master
+"$XFX_REAL_GIT" clone -q "$remote" "$other"
 
-render_step() {
+# The source repository pushes this same formula from a different concurrency
+# group, so a rejected push is an ordinary event. This wrapper makes that race
+# deterministic: before the step's Nth push it lets a second clone land a real
+# commit, so the step's push is genuinely rejected by git as non-fast-forward
+# rather than by a faked error string.
+cat >"$stub_bin/git" <<'STUB'
+#!/bin/bash
+if [ "${1:-}" = "push" ] && [ -n "${XFX_PUSH_LOG:-}" ]; then
+  echo "push" >>"$XFX_PUSH_LOG"
+  attempted=$(wc -l <"$XFX_PUSH_LOG" | tr -d ' ')
+  if [ "$attempted" -le "${XFX_RACE_PUSHES:-0}" ]; then
+    "$XFX_RACE_INJECT" "$attempted" >>"$XFX_RACE_LOG" 2>&1
+  fi
+fi
+exec "$XFX_REAL_GIT" "$@"
+STUB
+chmod 0755 "$stub_bin/git"
+
+cat >"$work/inject.sh" <<'INJECT'
+#!/bin/bash
+set -euo pipefail
+n="${1:?attempt required}"
+"$XFX_REAL_GIT" -C "$XFX_OTHER" fetch -q origin master
+"$XFX_REAL_GIT" -C "$XFX_OTHER" reset -q --hard FETCH_HEAD
+case "${XFX_RACE_KIND:-unrelated}" in
+  unrelated)
+    printf 'concurrent unrelated write %s\n' "$n" >>"$XFX_OTHER/README.md"
+    ;;
+  newer)
+    sed 's/^  version ".*"$/  version "2999.01.01.000000.1.1"/' "$XFX_RACE_FORMULA" \
+      >"$XFX_OTHER/Formula/xfx-preview.rb"
+    ;;
+  unreadable)
+    sed 's/^  version ".*"$/  version "preview-2026-08-22"/' "$XFX_RACE_FORMULA" \
+      >"$XFX_OTHER/Formula/xfx-preview.rb"
+    ;;
+  *)
+    echo "unknown race kind ${XFX_RACE_KIND:-}" >&2
+    exit 1
+    ;;
+esac
+"$XFX_REAL_GIT" -C "$XFX_OTHER" add -A
+"$XFX_REAL_GIT" -C "$XFX_OTHER" -c user.email=other@example.invalid -c user.name=other \
+  commit -qm "concurrent write $n"
+"$XFX_REAL_GIT" -C "$XFX_OTHER" push -q origin HEAD:master
+INJECT
+chmod 0755 "$work/inject.sh"
+
+export XFX_OTHER="$other"
+export XFX_RACE_INJECT="$work/inject.sh"
+export XFX_RACE_LOG="$work/inject.log"
+export XFX_RACE_FORMULA="$work/xfx-preview.rb"
+export XFX_RACE_PUSHES=0
+export XFX_RACE_KIND=unrelated
+
+publish_step() {
   local assets_dir="${1:-$assets}"
   local view_fixture="${2:-$work/releases-mixed.json}"
   rm -f "$work/render.out"
+  : >"$work/push.log"
+  : >"$work/inject.log"
   (
     cd "$repo"
     hash -r
     XFX_STUB_RELEASES="$work/releases-mixed.json" \
     XFX_STUB_VIEW="$view_fixture" \
     XFX_STUB_ASSETS="$assets_dir" \
+    XFX_PUSH_LOG="$work/push.log" \
     PATH="$stub_bin:$PATH" \
       bash "$work/render-step.sh"
   ) >"$work/render.out" 2>&1
 }
 
-render_status=0
-render_step || render_status=$?
-[[ "$render_status" -eq 0 ]] \
-  || fail "render step failed on a valid release: $(cat "$work/render.out")"
+push_attempts() {
+  wc -l <"$work/push.log" | tr -d ' '
+}
+remote_formula() {
+  "$XFX_REAL_GIT" -C "$remote" show master:Formula/xfx-preview.rb 2>/dev/null || true
+}
+remote_version() {
+  remote_formula | sed -n 's/^  version "\(.*\)"$/\1/p' | head -1
+}
+# Put the published formula into a known state without going through the step.
+seed_remote() {
+  local want="${1:?state required}"
+  "$XFX_REAL_GIT" -C "$other" fetch -q origin master
+  "$XFX_REAL_GIT" -C "$other" reset -q --hard FETCH_HEAD
+  if [ "$want" = "none" ]; then
+    rm -f "$other/Formula/xfx-preview.rb"
+  else
+    sed "s/^  version \".*\"\$/  version \"$want\"/" "$work/xfx-preview.rb" \
+      >"$other/Formula/xfx-preview.rb"
+  fi
+  "$XFX_REAL_GIT" -C "$other" add -A
+  "$XFX_REAL_GIT" -C "$other" -c user.email=seed@example.invalid -c user.name=seed \
+    commit -qm "seed published state: $want" --allow-empty
+  "$XFX_REAL_GIT" -C "$other" push -q origin HEAD:master
+}
+
+publish_status=0
+publish_step || publish_status=$?
+[[ "$publish_status" -eq 0 ]] \
+  || fail "publish step failed on a valid release: $(cat "$work/render.out")"
+[[ "$(push_attempts)" -eq 1 ]] \
+  || fail "publish step needed $(push_attempts) pushes on an uncontended tap"
 
 formula="$repo/Formula/xfx-preview.rb"
-[[ -f "$formula" ]] || fail "render step produced no Formula/xfx-preview.rb"
+[[ -f "$formula" ]] || fail "publish step produced no Formula/xfx-preview.rb"
+[[ "$(remote_version)" == "$version" ]] \
+  || fail "publish step did not push the formula: remote is at '$(remote_version)'"
 
 # The step must render the *selected* build, not whichever release came last.
 grep -Fq "version \"$version\"" "$formula" \
-  || fail "render step pinned the wrong version: $(sed -n 's/^  version "\(.*\)"$/\1/p' "$formula")"
+  || fail "publish step pinned the wrong version: $(sed -n 's/^  version "\(.*\)"$/\1/p' "$formula")"
 for asset in xfx-macos-aarch64 xfx-macos-x86_64 xfx-linux-aarch64 xfx-linux-x86_64; do
   grep -Fq "releases/download/$tag/$asset" "$formula" \
-    || fail "render step did not pin the exact-tag URL for $asset"
+    || fail "publish step did not pin the exact-tag URL for $asset"
   grep -Fq "sha256 \"$(sha_of "$asset")\"" "$formula" \
-    || fail "render step did not pin the published checksum for $asset"
+    || fail "publish step did not pin the published checksum for $asset"
 done
-# Keep this good render for the formula-level assertions further down; the
-# freshness cases below deliberately leave the repository copy in other states.
+# Keep this good render for the formula-level assertions further down; the cases
+# below deliberately leave the published formula in other states.
 cp "$formula" "$work/xfx-preview.rb"
 
-# Freshness, through the caller rather than the helper: a newer formula must
-# survive untouched, an older one must be replaced, an unreadable one must stop
-# the job instead of being clobbered.
-fresher="$work/fresher.rb"
-sed 's/^  version ".*"$/  version "2999.01.01.000000.1.1"/' "$formula" >"$fresher"
-cp "$fresher" "$repo/Formula/xfx-preview.rb"
-render_status=0
-render_step || render_status=$?
-[[ "$render_status" -eq 0 ]] \
-  || fail "render step failed instead of no-opping on an already-newer formula"
-cmp -s "$fresher" "$repo/Formula/xfx-preview.rb" \
-  || fail "render step downgraded a newer formula to $version"
+# Re-running against an already-current tap must not push, and must not add an
+# empty commit on top of the formula it already published.
+before_head="$("$XFX_REAL_GIT" -C "$remote" rev-parse master)"
+publish_status=0
+publish_step || publish_status=$?
+[[ "$publish_status" -eq 0 ]] || fail "publish step failed on an already-current tap"
+[[ "$(push_attempts)" -eq 0 ]] \
+  || fail "publish step pushed again with nothing to change"
+[[ "$("$XFX_REAL_GIT" -C "$remote" rev-parse master)" == "$before_head" ]] \
+  || fail "publish step moved master with nothing to change"
+
+# Freshness through the caller: a newer published formula must survive untouched,
+# an older one must be replaced, an unreadable one must stop the job.
+seed_remote 2999.01.01.000000.1.1
+publish_status=0
+publish_step || publish_status=$?
+[[ "$publish_status" -eq 0 ]] \
+  || fail "publish step failed instead of no-opping on an already-newer formula"
+[[ "$(remote_version)" == "2999.01.01.000000.1.1" ]] \
+  || fail "publish step downgraded a newer formula to $version"
+[[ "$(push_attempts)" -eq 0 ]] || fail "publish step pushed a downgrade"
 grep -Fq "refusing to replace" "$work/render.out" \
-  || fail "render step replaced a newer formula without saying so"
+  || fail "publish step skipped a newer formula without saying so"
 
-sed 's/^  version ".*"$/  version "2000.01.01.000000.1.1"/' "$formula" >"$repo/Formula/xfx-preview.rb"
-render_status=0
-render_step || render_status=$?
-[[ "$render_status" -eq 0 ]] \
-  || fail "render step failed on a legitimately stale formula"
-grep -Fq "version \"$version\"" "$repo/Formula/xfx-preview.rb" \
-  || fail "render step left a stale formula in place"
+seed_remote 2000.01.01.000000.1.1
+publish_status=0
+publish_step || publish_status=$?
+[[ "$publish_status" -eq 0 ]] || fail "publish step failed on a legitimately stale formula"
+[[ "$(remote_version)" == "$version" ]] \
+  || fail "publish step left a stale formula published"
 
-sed 's/^  version ".*"$/  version "preview-2026-08-22"/' "$formula" >"$work/unreadable.rb"
-cp "$work/unreadable.rb" "$repo/Formula/xfx-preview.rb"
-render_status=0
-render_step || render_status=$?
-[[ "$render_status" -ne 0 ]] \
-  || fail "render step accepted a formula whose version it cannot read"
-cmp -s "$work/unreadable.rb" "$repo/Formula/xfx-preview.rb" \
-  || fail "render step clobbered a formula whose version it cannot read"
+seed_remote preview-2026-08-22
+publish_status=0
+publish_step || publish_status=$?
+[[ "$publish_status" -ne 0 ]] \
+  || fail "publish step accepted a formula whose version it cannot read"
+[[ "$(remote_version)" == "preview-2026-08-22" ]] \
+  || fail "publish step clobbered a formula whose version it cannot read"
+
+# A workspace left dirty by an earlier attempt, or by a reused self-hosted runner,
+# must not be read back as published state. The leftover has to be genuinely
+# untracked to test this: a tracked modification is undone by the hard reset, so
+# only an untracked file reaches the freshness check.
+seed_remote none
+"$XFX_REAL_GIT" -C "$repo" fetch -q origin master
+"$XFX_REAL_GIT" -C "$repo" reset -q --hard FETCH_HEAD
+sed 's/^  version ".*"$/  version "2999.01.01.000000.1.1"/' "$work/xfx-preview.rb" \
+  >"$repo/Formula/xfx-preview.rb"
+"$XFX_REAL_GIT" -C "$repo" status --porcelain Formula/xfx-preview.rb \
+  | grep -q '^??' \
+  || fail "the dirty-workspace case did not leave an untracked render behind"
+publish_status=0
+publish_step || publish_status=$?
+[[ "$publish_status" -eq 0 ]] \
+  || fail "publish step failed on a workspace holding an untracked render"
+[[ "$(remote_version)" == "$version" ]] \
+  || fail "publish step read an untracked leftover render as the published formula"
+
+# ------------------------------------------------------ concurrent writers ---
+
+# An unrelated concurrent commit must cost a retry, not the bump: the step has to
+# re-read master, re-render on top of it, and keep the other writer's change.
+seed_remote 2000.01.01.000000.1.1
+XFX_RACE_KIND=unrelated
+XFX_RACE_PUSHES=1
+publish_status=0
+publish_step || publish_status=$?
+XFX_RACE_PUSHES=0
+[[ "$publish_status" -eq 0 ]] \
+  || fail "publish step gave up after one rejected push: $(cat "$work/render.out")"
+[[ "$(push_attempts)" -eq 2 ]] \
+  || fail "publish step made $(push_attempts) push attempts, expected 2 (one rejected, one accepted)"
+[[ "$(remote_version)" == "$version" ]] \
+  || fail "publish step did not republish after losing the race"
+"$XFX_REAL_GIT" -C "$remote" show master:README.md | grep -Fq "concurrent unrelated write 1" \
+  || fail "publish step discarded the concurrent writer's unrelated commit"
+
+# If the writer that won the race published a NEWER formula, the retry must see it
+# and stand down rather than overwrite it.
+seed_remote 2000.01.01.000000.1.1
+XFX_RACE_KIND=newer
+XFX_RACE_PUSHES=1
+publish_status=0
+publish_step || publish_status=$?
+XFX_RACE_PUSHES=0
+XFX_RACE_KIND=unrelated
+[[ "$publish_status" -eq 0 ]] \
+  || fail "publish step failed instead of standing down for a newer concurrent formula"
+[[ "$(remote_version)" == "2999.01.01.000000.1.1" ]] \
+  || fail "publish step overwrote a newer formula published by the winning writer"
+
+# A concurrent writer that published something unreadable must fail the job
+# closed, not be clobbered.
+seed_remote 2000.01.01.000000.1.1
+XFX_RACE_KIND=unreadable
+XFX_RACE_PUSHES=1
+publish_status=0
+publish_step || publish_status=$?
+XFX_RACE_PUSHES=0
+XFX_RACE_KIND=unrelated
+[[ "$publish_status" -ne 0 ]] \
+  || fail "publish step accepted an unreadable formula published by the winning writer"
+[[ "$(remote_version)" == "preview-2026-08-22" ]] \
+  || fail "publish step clobbered the winning writer's unreadable formula"
+
+# A tap under permanent contention must fail loudly after a bounded number of
+# attempts rather than spin or report success.
+seed_remote 2000.01.01.000000.1.1
+XFX_RACE_KIND=unrelated
+XFX_RACE_PUSHES=9
+publish_status=0
+publish_step || publish_status=$?
+XFX_RACE_PUSHES=0
+[[ "$publish_status" -ne 0 ]] \
+  || fail "publish step reported success while every push was rejected"
+[[ "$(push_attempts)" -eq 3 ]] \
+  || fail "publish step made $(push_attempts) push attempts under permanent contention, expected 3"
+[[ "$(remote_version)" == "2000.01.01.000000.1.1" ]] \
+  || fail "publish step published $version despite never winning a push"
 
 # A published SHA256SUMS that does not describe exactly the four contract assets,
 # or that disagrees with the bytes it names, must stop the job before the formula
@@ -496,13 +734,11 @@ printf 'swapped payload the published sum does not cover\n' \
 
 sums_case() {
   local variant="$1" why="$2" status=0
-  sed 's/^  version ".*"$/  version "2000.01.01.000000.1.1"/' "$work/xfx-preview.rb" \
-    >"$repo/Formula/xfx-preview.rb"
-  cp "$repo/Formula/xfx-preview.rb" "$work/stale-seed.rb"
-  render_step "$work/$variant" || status=$?
-  [[ "$status" -ne 0 ]] || fail "render step accepted $why"
-  cmp -s "$work/stale-seed.rb" "$repo/Formula/xfx-preview.rb" \
-    || fail "render step rewrote the formula from $why"
+  seed_remote 2000.01.01.000000.1.1
+  publish_step "$work/$variant" || status=$?
+  [[ "$status" -ne 0 ]] || fail "publish step accepted $why"
+  [[ "$(remote_version)" == "2000.01.01.000000.1.1" ]] \
+    || fail "publish step published a formula from $why"
 }
 sums_case assets-extra "a SHA256SUMS carrying an asset outside the contract"
 sums_case assets-missing "a SHA256SUMS that omits a contract asset"
@@ -512,15 +748,13 @@ sums_case assets-tampered "assets whose bytes disagree with the published SHA256
 # stopped being a prerelease after it was listed.
 jq '[.[] | if .tagName == $tag then .isPrerelease = false else . end]' \
   --arg tag "$tag" "$work/releases-mixed.json" >"$work/releases-demoted.json"
-sed 's/^  version ".*"$/  version "2000.01.01.000000.1.1"/' "$work/xfx-preview.rb" \
-  >"$repo/Formula/xfx-preview.rb"
-cp "$repo/Formula/xfx-preview.rb" "$work/stale-seed.rb"
-render_status=0
-render_step "$assets" "$work/releases-demoted.json" || render_status=$?
-[[ "$render_status" -ne 0 ]] \
-  || fail "render step pinned a release that is no longer a prerelease"
-cmp -s "$work/stale-seed.rb" "$repo/Formula/xfx-preview.rb" \
-  || fail "render step rewrote the formula from a release that is no longer a prerelease"
+seed_remote 2000.01.01.000000.1.1
+publish_status=0
+publish_step "$assets" "$work/releases-demoted.json" || publish_status=$?
+[[ "$publish_status" -ne 0 ]] \
+  || fail "publish step pinned a release that is no longer a prerelease"
+[[ "$(remote_version)" == "2000.01.01.000000.1.1" ]] \
+  || fail "publish step published a release that is no longer a prerelease"
 
 formula="$work/xfx-preview.rb"
 

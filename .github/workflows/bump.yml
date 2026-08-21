@@ -453,7 +453,7 @@ jobs:
         with:
           ref: master
 
-      - name: Render xfx-preview formula from the latest preview prerelease
+      - name: Render and publish the xfx-preview formula
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -523,10 +523,24 @@ jobs:
             local releases candidates tag prerelease version sha12
             local ref object_type source_sha
             local best_tag="" best_version="" best_sha="" seen=0
-            releases=$(gh release list --repo 2lab-ai/xfx --limit 100 \
-              --json tagName,isPrerelease)
-            candidates=$(printf '%s' "$releases" | jq -r \
-              '.[] | select(.tagName | startswith("preview-")) | [.tagName, (.isPrerelease | tostring)] | @tsv')
+            # This function is called inside a guarded command substitution, which
+            # disables `set -e` for everything it runs. A failed or unreadable query
+            # therefore has to be checked by hand: left implicit, it yields an empty
+            # listing, which would be indistinguishable from "nothing published yet"
+            # and would turn an API outage into a silent green no-op. Exit 1 is
+            # reserved for a query that SUCCEEDED and returned no preview candidate.
+            if ! releases=$(gh release list --repo 2lab-ai/xfx --limit 100 \
+              --json tagName,isPrerelease); then
+              echo "could not list xfx releases" >&2
+              return 2
+            fi
+            if ! candidates=$(printf '%s' "$releases" | jq -r \
+              'if type == "array" then .[] else error("release listing is not an array") end
+               | select(.tagName | startswith("preview-"))
+               | [.tagName, (.isPrerelease | tostring)] | @tsv'); then
+              echo "could not read the xfx release listing" >&2
+              return 2
+            fi
             [ -n "$candidates" ] || return 1
             while IFS=$'\t' read -r tag prerelease; do
               [ -n "$tag" ] || continue
@@ -593,21 +607,11 @@ jobs:
           [[ "${SOURCE_SHA:0:12}" == "$TAG_SHA12" ]] \
             || die "tag sha12 $TAG_SHA12 does not match source $SOURCE_SHA"
 
-          CURRENT=$(sed -n 's/^  version "\(.*\)"$/\1/p' Formula/xfx-preview.rb 2>/dev/null | head -1 || true)
-          bump_status=0
-          preview_bump_needed "$VERSION" "${CURRENT:-}" || bump_status=$?
-          if [ "$bump_status" -eq 1 ]; then
-            echo "formula already at $CURRENT; refusing to replace it with $VERSION"
-            exit 0
-          fi
-          if [ "$bump_status" -ne 0 ]; then
-            exit 1
-          fi
-
           # The winner already passed grammar, prerelease and tag-object validation
           # during selection; re-read the release directly as a final confirmation
           # that the exact tag we are about to pin is still the prerelease we chose.
-          release=$(gh release view "$TAG" --repo 2lab-ai/xfx --json tagName,isPrerelease)
+          release=$(gh release view "$TAG" --repo 2lab-ai/xfx --json tagName,isPrerelease) \
+            || die "could not re-read release $TAG"
           [[ "$(jq -r '.tagName' <<<"$release")" == "$TAG" ]] \
             || die "release lookup returned a different tag than $TAG"
           [[ "$(jq -r '.isPrerelease' <<<"$release")" == "true" ]] \
@@ -616,10 +620,12 @@ jobs:
           assets=$(mktemp -d)
           trap 'rm -rf "$assets"' EXIT HUP INT TERM
           gh release download "$TAG" --repo 2lab-ai/xfx --pattern SHA256SUMS \
-            --output "$assets/SHA256SUMS" --clobber
+            --output "$assets/SHA256SUMS" --clobber \
+            || die "could not download SHA256SUMS for $TAG"
           for asset in xfx-macos-aarch64 xfx-macos-x86_64 xfx-linux-aarch64 xfx-linux-x86_64; do
             gh release download "$TAG" --repo 2lab-ai/xfx --pattern "$asset" \
-              --output "$assets/$asset" --clobber
+              --output "$assets/$asset" --clobber \
+              || die "could not download $asset for $TAG"
           done
           # SHA256SUMS must describe exactly the four contract assets, and every
           # entry must match the bytes that were actually published.
@@ -647,36 +653,68 @@ jobs:
               || die "SHA256SUMS did not yield a sha-256 digest for every contract asset"
           done
 
-          sed -e "s/@VERSION@/$VERSION/g" \
-              -e "s/@TAG@/$TAG/g" \
-              -e "s/@SOURCE_SHA@/$SOURCE_SHA/g" \
-              -e "s/@SOURCE_SHA12@/$TAG_SHA12/g" \
-              -e "s/@SHA_MACOS_AARCH64@/$SHA_MACOS_AARCH64/" \
-              -e "s/@SHA_MACOS_X86_64@/$SHA_MACOS_X86_64/" \
-              -e "s/@SHA_LINUX_AARCH64@/$SHA_LINUX_AARCH64/" \
-              -e "s/@SHA_LINUX_X86_64@/$SHA_LINUX_X86_64/" \
-              Formula/xfx-preview.rb.tmpl > Formula/xfx-preview.rb
-
-          ruby -c Formula/xfx-preview.rb
-          if grep -q '@[A-Z0-9_]*@' Formula/xfx-preview.rb; then
-            echo "rendered formula still carries placeholders" >&2
-            exit 1
-          fi
-          grep -Fq "# tag: $TAG" Formula/xfx-preview.rb
-          grep -Fq "# source: $SOURCE_SHA" Formula/xfx-preview.rb
-
-      - name: Commit xfx preview bump
-        run: |
-          set -euo pipefail
-          [ -f Formula/xfx-preview.rb ] || { echo "no formula rendered; nothing to commit"; exit 0; }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Formula/xfx-preview.rb
-          git diff --cached --quiet && { echo "nothing to commit"; exit 0; }
-          TAG=$(sed -n 's|^.*releases/download/\(preview-[^/]*\)/.*$|\1|p' Formula/xfx-preview.rb | head -1)
-          git commit -m "xfx-preview $TAG"
-          git pull --rebase
-          git push
+
+          # xfx's own preview workflow writes this same file from a different
+          # concurrency group, so losing a push is an ordinary event, not an error.
+          # Each attempt re-derives everything that depends on repository state from
+          # the branch that actually won: fetch, hard reset onto it, re-read the
+          # published version, re-decide freshness, re-render, commit, push. That is
+          # deliberately not `pull --rebase` — the only file that can ever conflict
+          # is the formula, and replaying our old blob over a newer one is exactly
+          # the downgrade this job must never perform. Re-deriving has one correct
+          # answer at every step and no conflict state to resolve.
+          for attempt in 1 2 3; do
+            git fetch origin master || die "could not fetch master"
+            git reset --hard FETCH_HEAD || die "could not reset onto the fetched master"
+            # A render left behind by a previous attempt is untracked and would
+            # survive the reset, making the freshness check read our own candidate
+            # back as if it were published.
+            git clean -qfd Formula || die "could not clean the Formula directory"
+
+            CURRENT=$(sed -n 's/^  version "\(.*\)"$/\1/p' Formula/xfx-preview.rb 2>/dev/null | head -1 || true)
+            bump_status=0
+            preview_bump_needed "$VERSION" "${CURRENT:-}" || bump_status=$?
+            if [ "$bump_status" -eq 1 ]; then
+              echo "formula already at $CURRENT; refusing to replace it with $VERSION"
+              exit 0
+            fi
+            if [ "$bump_status" -ne 0 ]; then
+              die "refusing to overwrite an xfx-preview formula this job cannot read"
+            fi
+
+            sed -e "s/@VERSION@/$VERSION/g" \
+                -e "s/@TAG@/$TAG/g" \
+                -e "s/@SOURCE_SHA@/$SOURCE_SHA/g" \
+                -e "s/@SOURCE_SHA12@/$TAG_SHA12/g" \
+                -e "s/@SHA_MACOS_AARCH64@/$SHA_MACOS_AARCH64/" \
+                -e "s/@SHA_MACOS_X86_64@/$SHA_MACOS_X86_64/" \
+                -e "s/@SHA_LINUX_AARCH64@/$SHA_LINUX_AARCH64/" \
+                -e "s/@SHA_LINUX_X86_64@/$SHA_LINUX_X86_64/" \
+                Formula/xfx-preview.rb.tmpl > Formula/xfx-preview.rb
+
+            ruby -c Formula/xfx-preview.rb || die "rendered formula is not valid Ruby"
+            if grep -q '@[A-Z0-9_]*@' Formula/xfx-preview.rb; then
+              die "rendered formula still carries placeholders"
+            fi
+            grep -Fq "# tag: $TAG" Formula/xfx-preview.rb \
+              || die "rendered formula does not record the exact immutable tag"
+            grep -Fq "# source: $SOURCE_SHA" Formula/xfx-preview.rb \
+              || die "rendered formula does not record the exact source commit"
+
+            # No "nothing staged" guard here: identical bytes imply an identical
+            # version line, and preview_bump_needed already returned 1 and exited
+            # for that case above. Anything that reaches this point is a real change.
+            git add Formula/xfx-preview.rb
+            git commit -qm "xfx-preview $TAG"
+            if git push origin HEAD:master; then
+              echo "published xfx-preview $TAG on attempt $attempt"
+              exit 0
+            fi
+            echo "push rejected on attempt $attempt; re-reading master" >&2
+          done
+          die "could not publish xfx-preview $TAG after 3 attempts"
 
   preflight-dbotter-preview:
     if: github.event_name == 'workflow_dispatch'
