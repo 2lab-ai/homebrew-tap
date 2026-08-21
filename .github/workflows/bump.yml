@@ -445,6 +445,392 @@ jobs:
           git pull --rebase
           git push
 
+  bump-xfx-preview:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Render and publish the xfx-preview formula
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Scheduled backstop only: xfx's own preview workflow renders this formula
+          # over a repo-scoped deploy key as soon as it publishes, so this job only
+          # has to converge within six hours when that direct push is skipped or
+          # fails. It deliberately carries no `needs:` — a broken llmux or dbotter
+          # bump must not keep the xfx preview formula stale.
+          #
+          # Every assertion below is written `<condition> || die "why"` rather than as
+          # a bare `[[ ... ]]`: bash 3.2 does NOT apply `set -e` to a failing `[[ ]]`
+          # (fixed in 4.1), so a bare conditional silently passes when this step is
+          # replayed on macOS by scripts/test-xfx-preview-contract.sh, and a genuine
+          # regression would then be invisible until it reached the runner.
+          die() {
+            echo "$*" >&2
+            exit 1
+          }
+
+          preview_version_gt() {
+            # Exit 0 when $1 is strictly newer than $2, comparing dot-separated
+            # decimal fields (YYYY.MM.DD.HHMMSS.run_id.attempt). The tap must never
+            # replace a formula with an older build, and leading-zero clock fields
+            # must not be read as octal.
+            local left="${1:?left version required}" right="${2:?right version required}"
+            local -a l r
+            IFS='.' read -r -a l <<<"$left"
+            IFS='.' read -r -a r <<<"$right"
+            local count=${#l[@]}
+            if [ "${#r[@]}" -gt "$count" ]; then count=${#r[@]}; fi
+            local i x y
+            for ((i = 0; i < count; i++)); do
+              x=$((10#${l[i]:-0}))
+              y=$((10#${r[i]:-0}))
+              if [ "$x" -gt "$y" ]; then return 0; fi
+              if [ "$x" -lt "$y" ]; then return 1; fi
+            done
+            return 1
+          }
+
+          published_version() {
+            # Print the version currently published in Formula/xfx-preview.rb, or
+            # nothing at all when no formula is published yet. Exit 2 when a formula
+            # EXISTS but does not carry exactly one readable version line.
+            #
+            # Existence is tested on its own for a reason: grepping the version out
+            # of a file that has none yields an empty string, which is exactly what
+            # "no formula yet" looks like, so a hand-edited or half-written formula
+            # would be silently overwritten instead of stopping the job.
+            local lines count
+            [ -e Formula/xfx-preview.rb ] || return 0
+            lines=$(sed -n 's/^  version "\(.*\)"$/\1/p' Formula/xfx-preview.rb)
+            if [ -z "$lines" ]; then
+              echo "the published xfx-preview formula has no version line" >&2
+              return 2
+            fi
+            count=$(printf '%s' "$lines" | grep -c '^' || true)
+            if [ "$count" -ne 1 ]; then
+              echo "the published xfx-preview formula has $count version lines" >&2
+              return 2
+            fi
+            if ! [[ "$lines" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+              echo "the published xfx-preview version is unreadable: $lines" >&2
+              return 2
+            fi
+            printf '%s\n' "$lines"
+          }
+
+          preview_bump_needed() {
+            # Exit 0 when the selected version $1 may replace the formula's current
+            # version $2 (empty = no formula yet). Exit 1 = same or older, a no-op.
+            # Exit 2 = the tracked formula carries a version this job cannot read,
+            # in which case it must fail rather than clobber it.
+            local candidate="${1:?candidate version required}" current="${2-}"
+            [ -n "$current" ] || return 0
+            if ! [[ "$current" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+              echo "existing xfx-preview version is unreadable: $current" >&2
+              return 2
+            fi
+            preview_version_gt "$candidate" "$current"
+          }
+
+          tag_ref_query() {
+            # Query one tag ref. On success the response body goes to stdout.
+            #
+            # Exit 0 = body captured. Exit 3 = the API structurally reported that
+            # this ref does not exist, so the candidate is invalid. Exit 2 = any
+            # other outcome, which is NOT evidence the tag is gone and must stop
+            # the job: a transient 5xx, an expired token or a rate limit on the
+            # newest build would otherwise silently promote an older one.
+            #
+            # stdout and stderr are captured to separate files on purpose. gh's
+            # stderr is prose written for a human — "proxy failed after upstream
+            # returned HTTP 404" is a 5xx that mentions 404, and every previous
+            # attempt to classify by matching text in it retired the newest
+            # candidate during an outage. Only the response body decides, and only
+            # through its structural `.status` field.
+            local query_tag="${1:?tag required}" out err status body_status
+            out=$(mktemp) || return 2
+            err=$(mktemp) || { rm -f "$out"; return 2; }
+            status=0
+            gh api "repos/2lab-ai/xfx/git/ref/tags/$query_tag" >"$out" 2>"$err" || status=$?
+            if [ "$status" -eq 0 ]; then
+              cat "$out"
+              rm -f "$out" "$err"
+              return 0
+            fi
+            # Exactly one JSON object that carries a structural status of its own.
+            # A body that only *mentions* 404 in its message, a truncated body, an
+            # HTML error page and an absent body all fall through to the hard stop.
+            body_status=$(jq -e -r -s \
+              'if length != 1 then error("expected exactly one error document") else .[0] end
+               | if (type == "object") and has("status")
+                 then (.status | tostring)
+                 else error("error body carries no structural status") end' \
+              <"$out" 2>/dev/null || true)
+            if [ "$body_status" = "404" ]; then
+              rm -f "$out" "$err"
+              return 3
+            fi
+            # Policy, stated once: when gh's prose and the response body disagree,
+            # the body wins, because it is the only structured evidence available
+            # and re-admitting prose as a veto would re-admit the substring
+            # matching that caused this whole class of bug. Everything without an
+            # authoritative body stops the job instead.
+            echo "could not query the tag ref for $query_tag (gh exit $status, body status ${body_status:-none})" >&2
+            echo "  stdout: $(head -c 500 "$out")" >&2
+            echo "  stderr: $(head -c 500 "$err")" >&2
+            rm -f "$out" "$err"
+            return 2
+          }
+
+          select_preview_release() {
+            # Print "<tag>\t<version>\t<source_sha>" for the highest *valid* preview
+            # prerelease. Exit 1 = no preview-* candidate at all (a no-op, not an
+            # error); exit 2 = candidates existed but none survived validation.
+            #
+            # Selection is by derived numeric version, never by release creation
+            # time: a release recreated later with an older stamp, or a malformed
+            # tag published after a good one, would otherwise pin this backstop
+            # stale indefinitely. Every candidate is validated BEFORE it can win, so
+            # an invalid tag never becomes a ranking candidate; each rejection is
+            # reported on stderr rather than swallowed.
+            local releases candidates tag prerelease version sha12
+            local ref ref_status ref_fields object_type source_sha
+            local best_tag="" best_version="" best_sha="" seen=0
+            # This function is called inside a guarded command substitution, which
+            # disables `set -e` for everything it runs. A failed or unreadable query
+            # therefore has to be checked by hand: left implicit, it yields an empty
+            # listing, which would be indistinguishable from "nothing published yet"
+            # and would turn an API outage into a silent green no-op. Exit 1 is
+            # reserved for a query that SUCCEEDED and returned no preview candidate.
+            if ! releases=$(gh release list --repo 2lab-ai/xfx --limit 100 \
+              --json tagName,isPrerelease); then
+              echo "could not list xfx releases" >&2
+              return 2
+            fi
+            # A query can also succeed and print nothing at all, or a truncated
+            # body, or an error object. jq reads zero documents from empty input
+            # and exits 0, so "no output" would otherwise degrade to "no releases".
+            # Require exactly one document and require it to be an array: a valid
+            # `[]` is the only thing allowed to mean "nothing published yet".
+            if ! printf '%s' "$releases" | jq -e -s \
+              'length == 1 and ((.[0] | type) == "array")' >/dev/null 2>&1; then
+              echo "the xfx release listing is not exactly one JSON array" >&2
+              return 2
+            fi
+            if ! candidates=$(printf '%s' "$releases" | jq -r \
+              '.[] | select(.tagName | startswith("preview-"))
+               | [.tagName, (.isPrerelease | tostring)] | @tsv'); then
+              echo "could not read the xfx release listing" >&2
+              return 2
+            fi
+            [ -n "$candidates" ] || return 1
+            while IFS=$'\t' read -r tag prerelease; do
+              [ -n "$tag" ] || continue
+              seen=$((seen + 1))
+              if [ "$prerelease" != "true" ]; then
+                echo "skipping $tag: release is not a prerelease" >&2
+                continue
+              fi
+              # preview-YYYY-MM-DD-HHMMSS-<run_id>-<attempt>-<sha12>
+              if ! [[ "$tag" =~ ^preview-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{6})-([1-9][0-9]*)-([1-9][0-9]*)-([0-9a-f]{12})$ ]]; then
+                echo "skipping $tag: tag does not match the xfx preview contract" >&2
+                continue
+              fi
+              version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.${BASH_REMATCH[4]}.${BASH_REMATCH[5]}.${BASH_REMATCH[6]}"
+              sha12="${BASH_REMATCH[7]}"
+              ref_status=0
+              ref=$(tag_ref_query "$tag") || ref_status=$?
+              if [ "$ref_status" -eq 3 ]; then
+                echo "skipping $tag: the API reports no such git tag ref" >&2
+                continue
+              fi
+              if [ "$ref_status" -ne 0 ]; then
+                return 2
+              fi
+              # One validated read: a ref that comes back but is not a git ref
+              # object is a parse failure, not a missing tag. Two bare `jq -r`
+              # reads would quietly yield the string "null" and fall through to
+              # the checks below as if the API had answered.
+              if ! ref_fields=$(printf '%s' "$ref" | jq -e -s -r \
+                'if length != 1 then error("expected exactly one tag ref document") else .[0] end
+                 | if (type == "object") and ((.object | type) == "object")
+                      and ((.object.type | type) == "string")
+                      and ((.object.sha | type) == "string")
+                   then [.object.type, .object.sha] | @tsv
+                   else error("tag ref is not a git ref object") end' 2>/dev/null); then
+                echo "could not read the tag ref for $tag" >&2
+                return 2
+              fi
+              IFS=$'\t' read -r object_type source_sha <<<"$ref_fields"
+              if [ "$object_type" != "commit" ]; then
+                echo "skipping $tag: tag object is $object_type, not a commit" >&2
+                continue
+              fi
+              if ! [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "skipping $tag: tag does not resolve to a commit sha" >&2
+                continue
+              fi
+              if [ "${source_sha:0:12}" != "$sha12" ]; then
+                echo "skipping $tag: tag sha12 $sha12 does not match source $source_sha" >&2
+                continue
+              fi
+              if [ -z "$best_version" ] || preview_version_gt "$version" "$best_version"; then
+                best_tag="$tag"
+                best_version="$version"
+                best_sha="$source_sha"
+              fi
+            done <<<"$candidates"
+            [ "$seen" -gt 0 ] || return 1
+            [ -n "$best_tag" ] || return 2
+            printf '%s\t%s\t%s\n' "$best_tag" "$best_version" "$best_sha"
+          }
+
+          selection=""
+          selection_status=0
+          selection=$(select_preview_release) || selection_status=$?
+          if [ "$selection_status" -eq 1 ]; then
+            echo "no xfx preview prerelease yet"
+            exit 0
+          fi
+          if [ "$selection_status" -ne 0 ]; then
+            echo "no xfx preview prerelease survived validation" >&2
+            exit 1
+          fi
+          IFS=$'\t' read -r TAG VERSION SOURCE_SHA <<<"$selection"
+          [[ "$TAG" =~ ^preview-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{6})-([1-9][0-9]*)-([1-9][0-9]*)-([0-9a-f]{12})$ ]] \
+            || die "selected tag does not match the xfx preview contract: $TAG"
+          [[ "$VERSION" == "${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.${BASH_REMATCH[4]}.${BASH_REMATCH[5]}.${BASH_REMATCH[6]}" ]] \
+            || die "selected version $VERSION was not derived from tag $TAG"
+          TAG_SHA12="${BASH_REMATCH[7]}"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || die "selected source commit is not a 40-hex sha: $SOURCE_SHA"
+          [[ "${SOURCE_SHA:0:12}" == "$TAG_SHA12" ]] \
+            || die "tag sha12 $TAG_SHA12 does not match source $SOURCE_SHA"
+
+          # The winner already passed grammar, prerelease and tag-object validation
+          # during selection; re-read the release directly as a final confirmation
+          # that the exact tag we are about to pin is still the prerelease we chose.
+          release=$(gh release view "$TAG" --repo 2lab-ai/xfx --json tagName,isPrerelease) \
+            || die "could not re-read release $TAG"
+          # One explicitly guarded check over the whole response. Reading the two
+          # fields with separate `jq -r` calls compares output that jq printed
+          # BEFORE it hit a parse error, so a well-formed object followed by junk
+          # would satisfy both comparisons while jq was failing underneath them.
+          printf '%s' "$release" | jq -e -s --arg tag "$TAG" \
+            'length == 1
+             and ((.[0] | type) == "object")
+             and (.[0].tagName == $tag)
+             and (.[0].isPrerelease == true)' >/dev/null 2>&1 \
+            || die "$TAG did not re-read as exactly one prerelease named $TAG"
+
+          assets=$(mktemp -d)
+          trap 'rm -rf "$assets"' EXIT HUP INT TERM
+          gh release download "$TAG" --repo 2lab-ai/xfx --pattern SHA256SUMS \
+            --output "$assets/SHA256SUMS" --clobber \
+            || die "could not download SHA256SUMS for $TAG"
+          for asset in xfx-macos-aarch64 xfx-macos-x86_64 xfx-linux-aarch64 xfx-linux-x86_64; do
+            gh release download "$TAG" --repo 2lab-ai/xfx --pattern "$asset" \
+              --output "$assets/$asset" --clobber \
+              || die "could not download $asset for $TAG"
+          done
+          # SHA256SUMS must describe exactly the four contract assets, and every
+          # entry must match the bytes that were actually published.
+          expected_names=$(printf '%s\n' xfx-linux-aarch64 xfx-linux-x86_64 xfx-macos-aarch64 xfx-macos-x86_64)
+          actual_names=$(awk '{ file = $2; sub(/^\*/, "", file); print file }' "$assets/SHA256SUMS" | sort)
+          [[ "$actual_names" == "$expected_names" ]] \
+            || die "SHA256SUMS does not describe exactly the four contract assets: $actual_names"
+          ( cd "$assets" && sha256sum --check --strict SHA256SUMS ) \
+            || die "published assets do not match their published checksums"
+
+          # No associative array here on purpose: this whole step is executed
+          # verbatim by scripts/test-xfx-preview-contract.sh, and `declare -A`
+          # would make it unrunnable on the bash 3.2 that ships with macOS.
+          published_sha256() {
+            awk -v name="${1:?asset required}" \
+              '{ file = $2; sub(/^\*/, "", file); if (file == name) print $1 }' \
+              "$assets/SHA256SUMS"
+          }
+          SHA_MACOS_AARCH64=$(published_sha256 xfx-macos-aarch64)
+          SHA_MACOS_X86_64=$(published_sha256 xfx-macos-x86_64)
+          SHA_LINUX_AARCH64=$(published_sha256 xfx-linux-aarch64)
+          SHA_LINUX_X86_64=$(published_sha256 xfx-linux-x86_64)
+          for sha in "$SHA_MACOS_AARCH64" "$SHA_MACOS_X86_64" "$SHA_LINUX_AARCH64" "$SHA_LINUX_X86_64"; do
+            [[ "$sha" =~ ^[0-9a-f]{64}$ ]] \
+              || die "SHA256SUMS did not yield a sha-256 digest for every contract asset"
+          done
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # xfx's own preview workflow writes this same file from a different
+          # concurrency group, so losing a push is an ordinary event, not an error.
+          # Each attempt re-derives everything that depends on repository state from
+          # the branch that actually won: fetch, hard reset onto it, re-read the
+          # published version, re-decide freshness, re-render, commit, push. That is
+          # deliberately not `pull --rebase` — the only file that can ever conflict
+          # is the formula, and replaying our old blob over a newer one is exactly
+          # the downgrade this job must never perform. Re-deriving has one correct
+          # answer at every step and no conflict state to resolve.
+          for attempt in 1 2 3; do
+            git fetch origin master || die "could not fetch master"
+            git reset --hard FETCH_HEAD || die "could not reset onto the fetched master"
+            # A render left behind by a previous attempt is untracked and would
+            # survive the reset, making the freshness check read our own candidate
+            # back as if it were published.
+            git clean -qfd Formula || die "could not clean the Formula directory"
+
+            current_status=0
+            CURRENT=$(published_version) || current_status=$?
+            if [ "$current_status" -ne 0 ]; then
+              die "refusing to overwrite an xfx-preview formula this job cannot read"
+            fi
+            bump_status=0
+            preview_bump_needed "$VERSION" "${CURRENT:-}" || bump_status=$?
+            if [ "$bump_status" -eq 1 ]; then
+              echo "formula already at $CURRENT; refusing to replace it with $VERSION"
+              exit 0
+            fi
+            if [ "$bump_status" -ne 0 ]; then
+              die "refusing to overwrite an xfx-preview formula this job cannot read"
+            fi
+
+            sed -e "s/@VERSION@/$VERSION/g" \
+                -e "s/@TAG@/$TAG/g" \
+                -e "s/@SOURCE_SHA@/$SOURCE_SHA/g" \
+                -e "s/@SOURCE_SHA12@/$TAG_SHA12/g" \
+                -e "s/@SHA_MACOS_AARCH64@/$SHA_MACOS_AARCH64/" \
+                -e "s/@SHA_MACOS_X86_64@/$SHA_MACOS_X86_64/" \
+                -e "s/@SHA_LINUX_AARCH64@/$SHA_LINUX_AARCH64/" \
+                -e "s/@SHA_LINUX_X86_64@/$SHA_LINUX_X86_64/" \
+                Formula/xfx-preview.rb.tmpl > Formula/xfx-preview.rb
+
+            ruby -c Formula/xfx-preview.rb || die "rendered formula is not valid Ruby"
+            if grep -q '@[A-Z0-9_]*@' Formula/xfx-preview.rb; then
+              die "rendered formula still carries placeholders"
+            fi
+            grep -Fq "# tag: $TAG" Formula/xfx-preview.rb \
+              || die "rendered formula does not record the exact immutable tag"
+            grep -Fq "# source: $SOURCE_SHA" Formula/xfx-preview.rb \
+              || die "rendered formula does not record the exact source commit"
+
+            # No "nothing staged" guard here: identical bytes imply an identical
+            # version line, and preview_bump_needed already returned 1 and exited
+            # for that case above. Anything that reaches this point is a real change.
+            git add Formula/xfx-preview.rb
+            git commit -qm "xfx-preview $TAG"
+            if git push origin HEAD:master; then
+              echo "published xfx-preview $TAG on attempt $attempt"
+              exit 0
+            fi
+            echo "push rejected on attempt $attempt; re-reading master" >&2
+          done
+          die "could not publish xfx-preview $TAG after 3 attempts"
+
   preflight-dbotter-preview:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -708,3 +1094,5 @@ jobs:
 # registered: llmux-islands cask auto-bump (rides the llmux stable release)
 # registered: llmux-islands-preview cask auto-bump (rides the llmux preview prerelease)
 # registered: dbotter formula auto-bump (preview; stable added when a v* release exists)
+# registered: xfx-preview formula auto-bump (scheduled backstop; the xfx preview
+#             workflow pushes the formula directly for immediate propagation)

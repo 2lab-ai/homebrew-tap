@@ -1,0 +1,48 @@
+class XfxPreview < Formula
+  desc "Rust port of the fx agentic coding CLI (preview channel)"
+  homepage "https://github.com/2lab-ai/xfx"
+  version "@VERSION@"
+  license "Apache-2.0"
+
+  # Immutable preview identity, rendered from the exact prerelease:
+  # tag: @TAG@
+  # source: @SOURCE_SHA@
+  SOURCE_REVISION = "@SOURCE_SHA12@".freeze
+
+  on_macos do
+    on_arm do
+      url "https://github.com/2lab-ai/xfx/releases/download/@TAG@/xfx-macos-aarch64"
+      sha256 "@SHA_MACOS_AARCH64@"
+    end
+    on_intel do
+      url "https://github.com/2lab-ai/xfx/releases/download/@TAG@/xfx-macos-x86_64"
+      sha256 "@SHA_MACOS_X86_64@"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/2lab-ai/xfx/releases/download/@TAG@/xfx-linux-aarch64"
+      sha256 "@SHA_LINUX_AARCH64@"
+    end
+    on_intel do
+      url "https://github.com/2lab-ai/xfx/releases/download/@TAG@/xfx-linux-x86_64"
+      sha256 "@SHA_LINUX_X86_64@"
+    end
+  end
+
+  link_overwrite "bin/xfx"
+
+  def install
+    bin.install Dir["xfx-*"].first => "xfx"
+  end
+
+  test do
+    # `xfx --version` prints the Cargo version (0.1.0) on every channel, so it
+    # cannot prove this is the preview build. `status --json` carries the
+    # compile-time build identity, which is what the preview channel promises.
+    status = JSON.parse(shell_output("#{bin}/xfx status --json"))
+    assert_equal "preview", status["build_channel"]
+    assert_equal SOURCE_REVISION, status["build_revision"]
+  end
+end
