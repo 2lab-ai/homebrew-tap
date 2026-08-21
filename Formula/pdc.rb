@@ -27,8 +27,8 @@ class Pdc < Formula
     # would collide with pdc-preview, which ships its own copy of the same
     # filenames — the two channels are meant to coexist.
     (libexec/"palladium").install "runtime"
-    (libexec/"bin").install bin/"pdc"
-    bin.write_env_script libexec/"bin/pdc", PALLADIUM_RUNTIME: libexec/"palladium/runtime"
+    libexec.install bin/"pdc"
+    bin.write_env_script libexec/"pdc", PALLADIUM_RUNTIME: libexec/"palladium/runtime"
   end
 
   def caveats

@@ -23,8 +23,8 @@ class PdcPreview < Formula
     # cannot collide with the stable channel's copy of the same filenames.
     # The wrapper points this binary at its own.
     (libexec/"palladium").install "runtime"
-    (libexec/"bin").install bin/"pdc"
-    bin.write_env_script libexec/"bin/pdc", "pdc-preview",
+    libexec.install bin/"pdc"
+    bin.write_env_script libexec/"pdc", "pdc-preview",
                          PALLADIUM_RUNTIME: libexec/"palladium/runtime"
   end
 
