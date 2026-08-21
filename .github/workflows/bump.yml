@@ -549,7 +549,7 @@ jobs:
             # an invalid tag never becomes a ranking candidate; each rejection is
             # reported on stderr rather than swallowed.
             local releases candidates tag prerelease version sha12
-            local ref ref_status ref_fields object_type source_sha
+            local ref ref_status ref_codes ref_fields object_type source_sha
             local best_tag="" best_version="" best_sha="" seen=0
             # This function is called inside a guarded command substitution, which
             # disables `set -e` for everything it runs. A failed or unreadable query
@@ -602,16 +602,27 @@ jobs:
               ref_status=0
               ref=$(gh api "repos/2lab-ai/xfx/git/ref/tags/$tag" 2>&1) || ref_status=$?
               if [ "$ref_status" -ne 0 ]; then
-                case "$ref" in
-                  *"HTTP 404"*|*"Not Found"*)
-                    echo "skipping $tag: no such git tag ref (404)" >&2
-                    continue
-                    ;;
-                  *)
-                    echo "could not query the tag ref for $tag: $ref" >&2
-                    return 2
-                    ;;
-                esac
+                # Classify on the reported status only, never on prose. `gh api`
+                # exits 1 for every HTTP error, and a proxy or upstream 5xx says
+                # "Not Found" in its body often enough that matching those words
+                # is exactly how the newest build gets skipped during an outage.
+                #
+                # Measured with gh 2.96.0 against a missing repository: stderr is
+                # `gh: Not Found (HTTP 404)` and stdout is
+                # `{"message":"Not Found",...,"status":"404"}`. Both carry the
+                # status, so both are read and they must agree. `--include` would
+                # add a real status line, but it also prepends the response
+                # headers to stdout on the SUCCESS path, where they would break
+                # the guarded body parse below for no extra safety here.
+                ref_codes=$(printf '%s' "$ref" | grep -Eo 'HTTP(/[0-9.]+)? [0-9]{3}|"status" *: *"[0-9]{3}"' | grep -Eo '[0-9]{3}' | sort -u || true)
+                if [ "$ref_codes" = "404" ]; then
+                  echo "skipping $tag: no such git tag ref (confirmed 404)" >&2
+                  continue
+                fi
+                # No status, several conflicting statuses, or any status that is
+                # not 404: none of that is evidence the tag is gone. Stop.
+                echo "could not query the tag ref for $tag (reported status: ${ref_codes:-none}): $ref" >&2
+                return 2
               fi
               # One validated read: a ref that comes back but is not a git ref
               # object is a parse failure, not a missing tag. Two bare `jq -r`

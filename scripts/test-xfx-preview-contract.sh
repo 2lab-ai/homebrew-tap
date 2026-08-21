@@ -91,6 +91,8 @@ check(!runs.include?(%q{jq -r '.tagName' <<<"$release"}),
       "job still reads the re-read release through an unguarded jq, whose output survives its own parse error")
 check(runs.include?("published_version"),
       "job does not test for an existing formula separately from reading its version")
+check(!runs.include?('*"Not Found"*'),
+      "job still classifies a failed ref query by prose; only a confirmed HTTP status may retire a candidate")
 check(runs.include?("preview_version_gt"),
       "job has no numeric freshness comparator")
 check(runs.include?("select_preview_release"),
@@ -306,6 +308,9 @@ case "$subcommand" in
     if [ -f "$ref" ]; then
       cat "$ref"
     else
+      # Exactly what gh 2.96.0 emits for a missing resource: the JSON error body
+      # on stdout, its own one-line summary on stderr, exit 1.
+      printf '{"message":"Not Found","documentation_url":"https://docs.github.com/rest/git/refs#get-a-reference","status":"404"}\n'
       echo "gh: Not Found (HTTP 404)" >&2
       exit 1
     fi
@@ -502,11 +507,22 @@ cat >"$work/releases-transient.json" <<JSON
   {"tagName": "$decoy_tag", "isPrerelease": true, "createdAt": "2026-08-30T00:00:00Z"}
 ]
 JSON
-for failure in "503 Service Unavailable (HTTP 503)" \
-               "401 Bad credentials (HTTP 401)" \
-               "1 API rate limit exceeded (HTTP 403)"; do
-  status="${failure%% *}"
-  message="${failure#* }"
+# `gh api` exits 1 for every HTTP error, so the reported status is the only thing
+# that may classify a failure. Prose cannot: a proxy or upstream 5xx routinely
+# says "Not Found" in its body, and a missing status at all is not evidence of a
+# deleted tag. Only an unambiguous, confirmed 404 may skip a candidate.
+for failure in \
+  "1|Service Unavailable (HTTP 503)" \
+  "1|Bad credentials (HTTP 401)" \
+  "1|API rate limit exceeded (HTTP 403)" \
+  "1|upstream Not Found while handling request (HTTP 503)" \
+  "1|Not Found (HTTP 401)" \
+  "1|Not Found" \
+  "1|gateway said Not Found (HTTP 404) then (HTTP 503)" \
+  "1|no status at all, just words" \
+  "1|{\"message\":\"Not Found\",\"status\":\"503\"} and the summary says (HTTP 404)"; do
+  status="${failure%%|*}"
+  message="${failure#*|}"
   ref_fail "$tag" "$status" "$message"
   selection_status=0
   selection="$(select_with transient)" || selection_status=$?
