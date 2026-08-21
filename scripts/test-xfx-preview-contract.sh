@@ -92,7 +92,13 @@ check(!runs.include?(%q{jq -r '.tagName' <<<"$release"}),
 check(runs.include?("published_version"),
       "job does not test for an existing formula separately from reading its version")
 check(!runs.include?('*"Not Found"*'),
-      "job still classifies a failed ref query by prose; only a confirmed HTTP status may retire a candidate")
+      "job still classifies a failed ref query by prose; only the response body may retire a candidate")
+check(!runs.match?(/grep -Eo 'HTTP/),
+      "job still scrapes HTTP status codes out of text")
+check(runs.include?('>"$out" 2>"$err"'),
+      "job does not capture the ref query's stdout and stderr separately")
+check(runs.include?("(.status | tostring)"),
+      "job does not retire a candidate on the response body's structural status")
 check(runs.include?("preview_version_gt"),
       "job has no numeric freshness comparator")
 check(runs.include?("select_preview_release"),
@@ -217,11 +223,13 @@ bump_decision() {
 # The backstop must pick the highest *valid* preview build, not the most recently
 # created release. A release recreated later with an older stamp, or a malformed
 # tag published after a good one, would otherwise pin the tap stale forever.
-awk '/^select_preview_release\(\) \{$/, /^\}$/' "$work/xfx-job.sh" >"$work/select.sh"
-[[ -s "$work/select.sh" ]] \
-  || fail "the shipped select_preview_release() function could not be extracted"
-# shellcheck source=/dev/null
-source "$work/select.sh"
+for helper in tag_ref_query select_preview_release; do
+  awk -v fn="^$helper\\\\(\\\\) \\\\{$" '$0 ~ fn, /^\}$/' "$work/xfx-job.sh" >"$work/$helper.sh"
+  [[ -s "$work/$helper.sh" ]] \
+    || fail "the shipped $helper() function could not be extracted"
+  # shellcheck source=/dev/null
+  source "$work/$helper.sh"
+done
 
 stub_bin="$work/gh-stub"
 mkdir -p "$stub_bin" "$work/refs"
@@ -296,12 +304,17 @@ case "$subcommand" in
     esac
     ;;
   api)
-    # A `<tag>.fail` file models a query that failed for a reason other than the
-    # tag being absent: "503 Service Unavailable", "401 Bad credentials", ...
+    # `<tag>.fail` models a failed query: line 1 is the exit status and the rest
+    # is what gh writes to stderr. `<tag>.failbody` is the response body, on
+    # stdout. They are separate files because the whole point is that the
+    # classifier must not be able to reach the prose.
     ref_tag="${action##*/}"
     if [ -f "$XFX_STUB_REFS/$ref_tag.fail" ]; then
-      read -r fail_status fail_message <"$XFX_STUB_REFS/$ref_tag.fail"
-      echo "gh: $fail_message" >&2
+      fail_status=$(head -1 "$XFX_STUB_REFS/$ref_tag.fail")
+      if [ -f "$XFX_STUB_REFS/$ref_tag.failbody" ]; then
+        cat "$XFX_STUB_REFS/$ref_tag.failbody"
+      fi
+      tail -n +2 "$XFX_STUB_REFS/$ref_tag.fail" >&2
       exit "$fail_status"
     fi
     ref="$XFX_STUB_REFS/$ref_tag.json"
@@ -499,7 +512,13 @@ select_with empty-array >/dev/null || selection_status=$?
 # must stop the job. Silently treating it as "tag missing" lets a transient 5xx on
 # the newest build promote an older one, which is a downgrade with extra steps.
 ref_fail() {
-  printf '%s %s\n' "$2" "$3" >"$work/refs/$1.fail"
+  printf '%s\n%s\n' "$2" "$3" >"$work/refs/$1.fail"
+}
+ref_fail_body() {
+  printf '%s\n' "$2" >"$work/refs/$1.failbody"
+}
+clear_ref_fail() {
+  rm -f "$work/refs/$1.fail" "$work/refs/$1.failbody"
 }
 cat >"$work/releases-transient.json" <<JSON
 [
@@ -520,15 +539,56 @@ for failure in \
   "1|Not Found" \
   "1|gateway said Not Found (HTTP 404) then (HTTP 503)" \
   "1|no status at all, just words" \
+  "1|proxy failed after upstream returned HTTP 404" \
   "1|{\"message\":\"Not Found\",\"status\":\"503\"} and the summary says (HTTP 404)"; do
   status="${failure%%|*}"
   message="${failure#*|}"
   ref_fail "$tag" "$status" "$message"
   selection_status=0
   selection="$(select_with transient)" || selection_status=$?
-  rm -f "$work/refs/$tag.fail"
+  clear_ref_fail "$tag"
   [[ "$selection_status" -eq 2 ]] \
     || fail "a '$message' ref query reports $selection_status; selector returned '${selection:-}' instead of failing"
+done
+
+# Same again, but now with a response body present. Only a body that carries its
+# own structural status of exactly 404 may retire a candidate; prose in the body,
+# an HTML error page, several documents and a truncated body must all stop.
+for body in \
+  '{"message":"Not Found (HTTP 404)"}' \
+  '{"message":"Not Found","documentation_url":"https://docs.github.com/rest"}' \
+  '<html><body>404 Not Found</body></html>' \
+  '{"message":"Not Found","status":"404"} {"message":"Not Found","status":"404"}' \
+  '{"message":"Not Found","status":"503"}' \
+  '["Not Found",404]' \
+  '' ; do
+  ref_fail "$tag" 1 "gh: Not Found (HTTP 404)"
+  ref_fail_body "$tag" "$body"
+  selection_status=0
+  selection="$(select_with transient)" || selection_status=$?
+  clear_ref_fail "$tag"
+  [[ "$selection_status" -eq 2 ]] \
+    || fail "a ref query answering '${body:-<empty>}' reports $selection_status; selector returned '${selection:-}' instead of failing"
+done
+
+# A body that does structurally report 404 retires the candidate, whatever gh's
+# prose says. Documented policy: the response body is the only authority, because
+# re-admitting prose as a veto re-admits the substring matching being removed.
+for pair in \
+  '{"message":"Not Found","status":"404"}|gh: Not Found (HTTP 404)' \
+  '{"message":"Not Found","status":404}|gh: Not Found (HTTP 404)' \
+  '{"message":"Not Found","status":"404"}|gh: Service Unavailable (HTTP 503)'; do
+  body="${pair%%|*}"
+  message="${pair#*|}"
+  ref_fail "$tag" 1 "$message"
+  ref_fail_body "$tag" "$body"
+  selection_status=0
+  selection="$(select_with transient)" || selection_status=$?
+  clear_ref_fail "$tag"
+  [[ "$selection_status" -eq 0 ]] \
+    || fail "a structural 404 body with stderr '$message' did not retire the candidate (exit $selection_status)"
+  [[ "$selection" == "$(printf '%s\t%s\t%s' "$decoy_tag" "$decoy_version" "$decoy_sha")" ]] \
+    || fail "after a structural 404 the selector chose $(printf '%q' "$selection")"
 done
 
 # A confirmed 404 stays an invalid-candidate skip, so one deleted tag does not

@@ -537,6 +537,56 @@ jobs:
             preview_version_gt "$candidate" "$current"
           }
 
+          tag_ref_query() {
+            # Query one tag ref. On success the response body goes to stdout.
+            #
+            # Exit 0 = body captured. Exit 3 = the API structurally reported that
+            # this ref does not exist, so the candidate is invalid. Exit 2 = any
+            # other outcome, which is NOT evidence the tag is gone and must stop
+            # the job: a transient 5xx, an expired token or a rate limit on the
+            # newest build would otherwise silently promote an older one.
+            #
+            # stdout and stderr are captured to separate files on purpose. gh's
+            # stderr is prose written for a human — "proxy failed after upstream
+            # returned HTTP 404" is a 5xx that mentions 404, and every previous
+            # attempt to classify by matching text in it retired the newest
+            # candidate during an outage. Only the response body decides, and only
+            # through its structural `.status` field.
+            local query_tag="${1:?tag required}" out err status body_status
+            out=$(mktemp) || return 2
+            err=$(mktemp) || { rm -f "$out"; return 2; }
+            status=0
+            gh api "repos/2lab-ai/xfx/git/ref/tags/$query_tag" >"$out" 2>"$err" || status=$?
+            if [ "$status" -eq 0 ]; then
+              cat "$out"
+              rm -f "$out" "$err"
+              return 0
+            fi
+            # Exactly one JSON object that carries a structural status of its own.
+            # A body that only *mentions* 404 in its message, a truncated body, an
+            # HTML error page and an absent body all fall through to the hard stop.
+            body_status=$(jq -e -r -s \
+              'if length != 1 then error("expected exactly one error document") else .[0] end
+               | if (type == "object") and has("status")
+                 then (.status | tostring)
+                 else error("error body carries no structural status") end' \
+              <"$out" 2>/dev/null || true)
+            if [ "$body_status" = "404" ]; then
+              rm -f "$out" "$err"
+              return 3
+            fi
+            # Policy, stated once: when gh's prose and the response body disagree,
+            # the body wins, because it is the only structured evidence available
+            # and re-admitting prose as a veto would re-admit the substring
+            # matching that caused this whole class of bug. Everything without an
+            # authoritative body stops the job instead.
+            echo "could not query the tag ref for $query_tag (gh exit $status, body status ${body_status:-none})" >&2
+            echo "  stdout: $(head -c 500 "$out")" >&2
+            echo "  stderr: $(head -c 500 "$err")" >&2
+            rm -f "$out" "$err"
+            return 2
+          }
+
           select_preview_release() {
             # Print "<tag>\t<version>\t<source_sha>" for the highest *valid* preview
             # prerelease. Exit 1 = no preview-* candidate at all (a no-op, not an
@@ -549,7 +599,7 @@ jobs:
             # an invalid tag never becomes a ranking candidate; each rejection is
             # reported on stderr rather than swallowed.
             local releases candidates tag prerelease version sha12
-            local ref ref_status ref_codes ref_fields object_type source_sha
+            local ref ref_status ref_fields object_type source_sha
             local best_tag="" best_version="" best_sha="" seen=0
             # This function is called inside a guarded command substitution, which
             # disables `set -e` for everything it runs. A failed or unreadable query
@@ -593,35 +643,13 @@ jobs:
               fi
               version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.${BASH_REMATCH[4]}.${BASH_REMATCH[5]}.${BASH_REMATCH[6]}"
               sha12="${BASH_REMATCH[7]}"
-              # Only a CONFIRMED 404 makes a candidate invalid. Treating every
-              # failure as "tag missing" lets a transient 5xx, an expired token or
-              # a rate limit on the newest build silently promote an older one,
-              # which is a downgrade with extra steps. stderr is folded into the
-              # capture so the failure can be classified; a success that also wrote
-              # to stderr fails the guarded parse below, which is the safe way out.
               ref_status=0
-              ref=$(gh api "repos/2lab-ai/xfx/git/ref/tags/$tag" 2>&1) || ref_status=$?
+              ref=$(tag_ref_query "$tag") || ref_status=$?
+              if [ "$ref_status" -eq 3 ]; then
+                echo "skipping $tag: the API reports no such git tag ref" >&2
+                continue
+              fi
               if [ "$ref_status" -ne 0 ]; then
-                # Classify on the reported status only, never on prose. `gh api`
-                # exits 1 for every HTTP error, and a proxy or upstream 5xx says
-                # "Not Found" in its body often enough that matching those words
-                # is exactly how the newest build gets skipped during an outage.
-                #
-                # Measured with gh 2.96.0 against a missing repository: stderr is
-                # `gh: Not Found (HTTP 404)` and stdout is
-                # `{"message":"Not Found",...,"status":"404"}`. Both carry the
-                # status, so both are read and they must agree. `--include` would
-                # add a real status line, but it also prepends the response
-                # headers to stdout on the SUCCESS path, where they would break
-                # the guarded body parse below for no extra safety here.
-                ref_codes=$(printf '%s' "$ref" | grep -Eo 'HTTP(/[0-9.]+)? [0-9]{3}|"status" *: *"[0-9]{3}"' | grep -Eo '[0-9]{3}' | sort -u || true)
-                if [ "$ref_codes" = "404" ]; then
-                  echo "skipping $tag: no such git tag ref (confirmed 404)" >&2
-                  continue
-                fi
-                # No status, several conflicting statuses, or any status that is
-                # not 404: none of that is evidence the tag is gone. Stop.
-                echo "could not query the tag ref for $tag (reported status: ${ref_codes:-none}): $ref" >&2
                 return 2
               fi
               # One validated read: a ref that comes back but is not a git ref
