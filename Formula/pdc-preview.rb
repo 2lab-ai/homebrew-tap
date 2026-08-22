@@ -1,9 +1,9 @@
 class PdcPreview < Formula
   desc "Palladium compiler, preview channel - tracks main (installs as pdc-preview)"
   homepage "https://github.com/labforadvancedstudy/palladium-a"
-  url "https://github.com/labforadvancedstudy/palladium-a/archive/refs/tags/v0.3.0.tar.gz"
-  version "0.3.0"
-  sha256 "60309a421f20225cbf08866eb93fa9bb6ced0d38fbcdfabd05f21074fde38617"
+  url "https://github.com/labforadvancedstudy/palladium-a/archive/refs/tags/v0.4.0.tar.gz"
+  version "0.4.0"
+  sha256 "852762d25b5cd9efd9593aad48e37a38c5c49211b3d1db6ccdd872d3e3f24fef"
   license "MIT"
   head "https://github.com/labforadvancedstudy/palladium-a.git", branch: "main"
 
