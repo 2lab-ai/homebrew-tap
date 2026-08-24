@@ -1,0 +1,46 @@
+class Xfx < Formula
+  desc "Rust port of the fx agentic coding CLI"
+  homepage "https://github.com/2lab-ai/xfx"
+  version "@VERSION@"
+  license "Apache-2.0"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/2lab-ai/xfx/releases/download/v@VERSION@/xfx-aarch64-apple-darwin.tar.gz"
+      sha256 "@SHA_MACOS_AARCH64@"
+    end
+    on_intel do
+      url "https://github.com/2lab-ai/xfx/releases/download/v@VERSION@/xfx-x86_64-apple-darwin.tar.gz"
+      sha256 "@SHA_MACOS_X86_64@"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/2lab-ai/xfx/releases/download/v@VERSION@/xfx-aarch64-unknown-linux-gnu.tar.gz"
+      sha256 "@SHA_LINUX_AARCH64@"
+    end
+    on_intel do
+      url "https://github.com/2lab-ai/xfx/releases/download/v@VERSION@/xfx-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "@SHA_LINUX_X86_64@"
+    end
+  end
+
+  link_overwrite "bin/xfx"
+
+  def install
+    # Each stable archive extracts to xfx-<rust-target>/ alongside its LICENSE,
+    # NOTICE and docs; only the executable is installed.
+    bin.install Dir["xfx-*/xfx"].first => "xfx"
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/xfx --version")
+
+    # The Cargo version is identical on every channel, so it cannot prove this
+    # is the stable build. `status --json` carries the compile-time build
+    # identity, which is what the release channel promises.
+    status = JSON.parse(shell_output("#{bin}/xfx status --json"))
+    assert_equal "release", status["build_channel"]
+  end
+end

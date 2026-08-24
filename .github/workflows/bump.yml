@@ -445,6 +445,81 @@ jobs:
           git pull --rebase
           git push
 
+  bump-xfx:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render xfx formula from the latest stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=$(gh release view --repo 2lab-ai/xfx --json tagName -q .tagName 2>/dev/null || true)
+          if [ -z "$TAG" ]; then
+            echo "no stable release yet; skipping xfx formula"
+            exit 0
+          fi
+          VERSION="${TAG#v}"
+          CURRENT=$(sed -n 's/^  version "\(.*\)"$/\1/p' Formula/xfx.rb 2>/dev/null || true)
+          if [ "${CURRENT:-}" = "$VERSION" ]; then
+            echo "formula already at $VERSION"
+            exit 0
+          fi
+
+          # Stable assets are per-rust-target tarballs, so the checksum the
+          # formula carries is the archive's; brew extracts xfx-<target>/xfx.
+          ASSETS=(xfx-aarch64-apple-darwin.tar.gz xfx-x86_64-apple-darwin.tar.gz xfx-aarch64-unknown-linux-gnu.tar.gz xfx-x86_64-unknown-linux-gnu.tar.gz)
+          for asset in "${ASSETS[@]}"; do
+            gh release download "$TAG" --repo 2lab-ai/xfx --pattern "$asset" --output "/tmp/$asset" --clobber
+          done
+
+          # The release also publishes SHA256SUMS over every archive. The formula
+          # may only carry digests that file vouches for, so the downloads are
+          # verified against it before any digest is computed. The published list
+          # is filtered down to exactly the four contract archives and the count
+          # asserted: a missing entry must fail here, not be skipped the way
+          # `--ignore-missing` would skip it.
+          gh release download "$TAG" --repo 2lab-ai/xfx --pattern SHA256SUMS --output /tmp/xfx-SHA256SUMS --clobber
+          awk -v want="${ASSETS[*]}" '
+            BEGIN { split(want, wanted, " "); for (i in wanted) keep[wanted[i]] = 1 }
+            { name = $2; sub(/^\*/, "", name); sub(/^.*\//, "", name); if (keep[name]) print $1 "  " name }
+          ' /tmp/xfx-SHA256SUMS > /tmp/xfx-expected-sums
+          COVERED=$(awk 'END { print NR }' /tmp/xfx-expected-sums)
+          if [ "$COVERED" -ne 4 ]; then
+            echo "SHA256SUMS covers $COVERED of the 4 contract archives" >&2
+            exit 1
+          fi
+          (cd /tmp && sha256sum --check --strict xfx-expected-sums)
+
+          declare -A SHAS
+          for asset in "${ASSETS[@]}"; do
+            SHAS[$asset]=$(sha256sum "/tmp/$asset" | cut -d' ' -f1)
+          done
+
+          sed -e "s/@VERSION@/$VERSION/g" \
+              -e "s/@SHA_MACOS_AARCH64@/${SHAS[xfx-aarch64-apple-darwin.tar.gz]}/" \
+              -e "s/@SHA_MACOS_X86_64@/${SHAS[xfx-x86_64-apple-darwin.tar.gz]}/" \
+              -e "s/@SHA_LINUX_AARCH64@/${SHAS[xfx-aarch64-unknown-linux-gnu.tar.gz]}/" \
+              -e "s/@SHA_LINUX_X86_64@/${SHAS[xfx-x86_64-unknown-linux-gnu.tar.gz]}/" \
+              Formula/xfx.rb.tmpl > Formula/xfx.rb
+
+          ruby -c Formula/xfx.rb
+
+      - name: Commit bump
+        run: |
+          set -euo pipefail
+          [ -f Formula/xfx.rb ] || { echo "no stable formula; nothing to commit"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/xfx.rb
+          git diff --cached --quiet && { echo "nothing to commit"; exit 0; }
+          VERSION=$(sed -n 's/^  version "\(.*\)"$/\1/p' Formula/xfx.rb)
+          git commit -m "xfx $VERSION"
+          git pull --rebase
+          git push
+
   bump-xfx-preview:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest

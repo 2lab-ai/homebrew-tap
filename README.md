@@ -14,6 +14,7 @@ open "$(brew --prefix dbotter-preview)/Dbotter Preview.app"
 | `pdc` | Stable channel of [Palladium](https://github.com/labforadvancedstudy/palladium-a), a self-hosting systems language that compiles to C. Builds from the tagged source. Installs `pdc` plus the C runtime it links against, in `share/palladium/runtime`. |
 | `pdc-preview` | Preview channel of Palladium, tracking `main`. Installs as `pdc-preview`, so it coexists with a stable `pdc`. |
 | `xfx-preview` | Preview channel of [xfx](https://github.com/2lab-ai/xfx), a Rust port of the `fx` agentic coding CLI. Tracks the latest `preview-*` prerelease; the formula is `xfx-preview` but the installed executable is `xfx`. |
+| `xfx` | Stable xfx channel — appears automatically when the first `v*` stable release is cut. Installs the same `xfx` executable, whose `xfx status --json` reports `"build_channel": "release"`. |
 
 ```bash
 brew install 2lab-ai/tap/xfx-preview
