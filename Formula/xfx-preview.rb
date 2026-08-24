@@ -1,33 +1,33 @@
 class XfxPreview < Formula
   desc "Rust port of the fx agentic coding CLI (preview channel)"
   homepage "https://github.com/2lab-ai/xfx"
-  version "2026.08.22.084137.32562947487.1"
+  version "2026.08.24.030744.32685351848.1"
   license "Apache-2.0"
 
   # Immutable preview identity, rendered from the exact prerelease:
-  # tag: preview-2026-08-22-084137-32562947487-1-3bdcaec4803f
-  # source: 3bdcaec4803fc36a50a6561e3faa891250188fc4
-  SOURCE_REVISION = "3bdcaec4803f".freeze
+  # tag: preview-2026-08-24-030744-32685351848-1-6e8656291504
+  # source: 6e865629150470aa693f7e342c0cfacc2695f401
+  SOURCE_REVISION = "6e8656291504".freeze
 
   on_macos do
     on_arm do
-      url "https://github.com/2lab-ai/xfx/releases/download/preview-2026-08-22-084137-32562947487-1-3bdcaec4803f/xfx-macos-aarch64"
-      sha256 "14a891d051629079cfd3b1e04290d6a943a53f6a87932f1426fd470305a654e9"
+      url "https://github.com/2lab-ai/xfx/releases/download/preview-2026-08-24-030744-32685351848-1-6e8656291504/xfx-macos-aarch64"
+      sha256 "0b35f7037fae3c7c4a86aee5abeddf906e742d8b0c1591e7a7c10ae780f56060"
     end
     on_intel do
-      url "https://github.com/2lab-ai/xfx/releases/download/preview-2026-08-22-084137-32562947487-1-3bdcaec4803f/xfx-macos-x86_64"
-      sha256 "af04483558ae7493248e853e0bb421eab57530b6e29bf8a66bdef1fc72b09f3d"
+      url "https://github.com/2lab-ai/xfx/releases/download/preview-2026-08-24-030744-32685351848-1-6e8656291504/xfx-macos-x86_64"
+      sha256 "cfc1d266fcdf53fa74be72594922b47c317636dbfc81dcca6b088b77c82dfb1e"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/2lab-ai/xfx/releases/download/preview-2026-08-22-084137-32562947487-1-3bdcaec4803f/xfx-linux-aarch64"
-      sha256 "a5950cf3ce1aa997ffbbd801ca6d1747e43a46bd96a681520b00cbd6981cd527"
+      url "https://github.com/2lab-ai/xfx/releases/download/preview-2026-08-24-030744-32685351848-1-6e8656291504/xfx-linux-aarch64"
+      sha256 "8f06f133037e9468fd06a9c5ad7e5624a5b4682c6075d8f30655eb2007e4caa4"
     end
     on_intel do
-      url "https://github.com/2lab-ai/xfx/releases/download/preview-2026-08-22-084137-32562947487-1-3bdcaec4803f/xfx-linux-x86_64"
-      sha256 "812a02a14ab386a1f892a9dfa1e03c785c69b4dabb633943fc274e01560f401f"
+      url "https://github.com/2lab-ai/xfx/releases/download/preview-2026-08-24-030744-32685351848-1-6e8656291504/xfx-linux-x86_64"
+      sha256 "640353f525e328ee5ec6673824a1df40dad1cdfe9ce832c5a9d00d0642ba0a8f"
     end
   end
 
