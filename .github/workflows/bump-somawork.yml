@@ -1,0 +1,412 @@
+# somawork formula bump — driven by soma-work's own immutable release.
+#
+# ## Why this is not a job in `bump.yml`
+#
+# `bump.yml` carries dbotter's required `workflow_dispatch` schema plus a set of
+# schedule-only jobs, and its contract test asserts that every job there is one
+# of those two shapes. soma-work announces a release with a
+# `repository_dispatch`, which is neither, so putting this there would have meant
+# widening a schema three other formulae depend on. A separate file costs one
+# `concurrency` group — shared with `bump.yml`, so tap pushes still serialize.
+#
+# ## The privilege split
+#
+# `preflight-somawork` holds `contents: read`, checks out without credentials,
+# and is the only job that touches release bytes: it downloads the manifest and
+# the three archives, re-measures them, unpacks them with a reader that refuses
+# escaping members, and checks that each tree actually contains the paths the
+# formulae will assert. It uploads a small non-secret receipt.
+#
+# `bump-somawork` holds `contents: write`. It never downloads an archive and
+# never runs release code. It re-derives the whole receipt from the manifest —
+# whose bytes the dispatch pinned by digest — and requires the uploaded proof to
+# equal it exactly, then renders, syntax-checks, commits and pushes.
+#
+# ## Event payload never reaches a shell
+#
+# `${{ }}` is textual substitution performed before bash parses the line, so a
+# payload field containing a quote would execute on the runner. Every
+# `client_payload` field therefore arrives through `env:` and is referenced as a
+# quoted `"$VAR"`; artifact names are static for the same reason. This is
+# asserted mechanically by `scripts/test-somawork-workflow-contract.sh`.
+#
+# ## Versions are ordered by the repository's run id
+#
+# `somawork --version` reports soma-work's package version, which does not move
+# between releases of the same source version. Publishing that as the Homebrew
+# version would make every preview release look identical to `brew upgrade`. So
+# both channels tag as `<channel prefix>-v<package version>-<run id>` and the tap
+# renders `<package version>.<run id>`. GitHub run ids increase across the whole
+# repository, so the controller formula — the one file both channels write — moves
+# forward no matter which channel bumped last.
+#
+# ## One channel, one runtime
+#
+# The dispatch's `package` field is the channel: `somawork-preview` or
+# `somawork`. It selects the runtime formula, and it is also that formula's
+# filename, so the write job never names the other channel's file. A preview
+# manifest does describe a production-profile archive, but those are
+# preview-channel bits with a production marker — rendering them as
+# `Formula/somawork.rb` would put unreleased code behind the stable gate. The
+# commit step proves the untouched formula really was untouched before it stages
+# anything.
+#
+# ## Nothing is discovered
+#
+# There is no "latest release" lookup anywhere here. The dispatch names one
+# immutable tag and one manifest digest; if the release moved, the digest fails
+# and the run stops.
+
+name: Bump somawork formulae
+run-name: >-
+  ${{ format('somawork-release {0}', github.event.client_payload.tag) }}
+
+on:
+  repository_dispatch:
+    types: [somawork-release]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homebrew-tap-bump
+  cancel-in-progress: false
+
+jobs:
+  preflight-somawork:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      # Read off the tag object, not off the payload: the dispatch does not
+      # carry a source commit, and the write job re-derives this independently
+      # before trusting it.
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          persist-credentials: false
+
+      - name: Resolve the immutable release identity
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOMAWORK_PACKAGE: ${{ github.event.client_payload.package }}
+          SOMAWORK_TAG: ${{ github.event.client_payload.tag }}
+          SOMAWORK_MANIFEST_URL: ${{ github.event.client_payload.manifest_url }}
+          SOMAWORK_MANIFEST_SHA256: ${{ github.event.client_payload.manifest_sha256 }}
+          SOMAWORK_SOURCE_REPOSITORY: ${{ github.event.client_payload.source_repository }}
+        run: |
+          set -euo pipefail
+          # The dispatch is attacker-shaped input until every field is checked.
+          [[ "$SOMAWORK_SOURCE_REPOSITORY" == "2lab-ai/soma-work" ]]
+          [[ "$SOMAWORK_PACKAGE" == "somawork-preview" || "$SOMAWORK_PACKAGE" == "somawork" ]]
+          [[ "$SOMAWORK_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]
+          [[ "$SOMAWORK_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          expected_manifest_url="https://github.com/2lab-ai/soma-work/releases/download/$SOMAWORK_TAG/somawork-manifest.json"
+          [[ "$SOMAWORK_MANIFEST_URL" == "$expected_manifest_url" ]]
+
+          # The tag has to exist and point at a commit; the source SHA is read
+          # off it rather than accepted from the payload, because the payload
+          # does not carry one.
+          ref=$(gh api "repos/2lab-ai/soma-work/git/ref/tags/$SOMAWORK_TAG")
+          [[ "$(jq -r '.object.type' <<<"$ref")" == "commit" ]]
+          source_sha=$(jq -r '.object.sha' <<<"$ref")
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          release=$(gh release view "$SOMAWORK_TAG" --repo 2lab-ai/soma-work \
+            --json tagName,isDraft)
+          [[ "$(jq -r '.tagName' <<<"$release")" == "$SOMAWORK_TAG" ]]
+          # A draft release's assets 404 for everyone else; bumping the tap to
+          # one would publish a formula nobody can install.
+          [[ "$(jq -r '.isDraft' <<<"$release")" == "false" ]]
+          echo "source_sha=$source_sha" >>"$GITHUB_OUTPUT"
+
+      - name: Download the exact immutable release payload
+        env:
+          SOMAWORK_TAG: ${{ github.event.client_payload.tag }}
+          SOMAWORK_MANIFEST_URL: ${{ github.event.client_payload.manifest_url }}
+          SOMAWORK_MANIFEST_SHA256: ${{ github.event.client_payload.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$SOMAWORK_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]
+          [[ "$SOMAWORK_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          mkdir -p somawork-preflight-input/assets
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            "$SOMAWORK_MANIFEST_URL" \
+            --output somawork-preflight-input/somawork-manifest.json
+          actual_manifest_sha256=$(sha256sum \
+            somawork-preflight-input/somawork-manifest.json | awk '{print $1}')
+          [[ "$actual_manifest_sha256" == "$SOMAWORK_MANIFEST_SHA256" ]]
+
+          # Filenames come out of the pinned manifest, but they are still gated
+          # against the release's own naming grammar before they become a path
+          # or a URL. The verifier below is what decides they are the right ones.
+          mapfile -t filenames < <(jq -r '.assets[].filename' \
+            somawork-preflight-input/somawork-manifest.json)
+          [[ "${#filenames[@]}" -eq 3 ]]
+          for filename in "${filenames[@]}"; do
+            [[ "$filename" =~ ^(somawork-cli|somawork|somawork-preview)-[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}-darwin-arm64\.tar\.gz$ ]]
+            curl --fail --location --proto '=https' --tlsv1.2 \
+              "https://github.com/2lab-ai/soma-work/releases/download/$SOMAWORK_TAG/$filename" \
+              --output "somawork-preflight-input/assets/$filename"
+          done
+
+      - name: Measure the payload without a credential in reach
+        run: |
+          set -euo pipefail
+          # No token in this step's environment, and the parent environment is
+          # cleared before the verifier starts: whatever is in those archives,
+          # nothing here can hand it a repository credential. The verifier reads
+          # the archives; it never executes them.
+          verifier_home=$(mktemp -d)
+          trap 'rm -rf "$verifier_home"' EXIT HUP INT TERM
+          env -i \
+            HOME="$verifier_home" \
+            PATH=/usr/bin:/bin \
+            LANG=C \
+            LC_ALL=C \
+            TZ=UTC \
+            /usr/bin/python3 scripts/verify-somawork-assets.py \
+            --manifest somawork-preflight-input/somawork-manifest.json \
+            --assets-dir somawork-preflight-input/assets \
+            --output somawork-tap-preflight.json
+
+      - name: Upload the unprivileged measured preflight
+        uses: actions/upload-artifact@v4
+        with:
+          name: somawork-tap-preflight
+          path: somawork-tap-preflight.json
+          if-no-files-found: error
+          retention-days: 1
+
+  bump-somawork:
+    runs-on: ubuntu-latest
+    needs: preflight-somawork
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Download the measured preflight proof
+        uses: actions/download-artifact@v4
+        with:
+          name: somawork-tap-preflight
+          path: preflight
+
+      - name: Revalidate the proof and render the somawork formulae
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOMAWORK_PACKAGE: ${{ github.event.client_payload.package }}
+          SOMAWORK_TAG: ${{ github.event.client_payload.tag }}
+          SOMAWORK_MANIFEST_URL: ${{ github.event.client_payload.manifest_url }}
+          SOMAWORK_MANIFEST_SHA256: ${{ github.event.client_payload.manifest_sha256 }}
+          SOMAWORK_SOURCE_REPOSITORY: ${{ github.event.client_payload.source_repository }}
+          SOMAWORK_SOURCE_SHA: ${{ needs.preflight-somawork.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          # Everything the read job checked is checked again here. A proof is
+          # evidence about bytes, not authorization to skip the identity checks.
+          [[ "$SOMAWORK_SOURCE_REPOSITORY" == "2lab-ai/soma-work" ]]
+          [[ "$SOMAWORK_PACKAGE" == "somawork-preview" || "$SOMAWORK_PACKAGE" == "somawork" ]]
+          [[ "$SOMAWORK_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]
+          [[ "$SOMAWORK_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          expected_manifest_url="https://github.com/2lab-ai/soma-work/releases/download/$SOMAWORK_TAG/somawork-manifest.json"
+          [[ "$SOMAWORK_MANIFEST_URL" == "$expected_manifest_url" ]]
+
+          ref=$(gh api "repos/2lab-ai/soma-work/git/ref/tags/$SOMAWORK_TAG")
+          [[ "$(jq -r '.object.type' <<<"$ref")" == "commit" ]]
+          [[ "$(jq -r '.object.sha' <<<"$ref")" == "$SOMAWORK_SOURCE_SHA" ]]
+          release=$(gh release view "$SOMAWORK_TAG" --repo 2lab-ai/soma-work \
+            --json tagName,isDraft)
+          [[ "$(jq -r '.tagName' <<<"$release")" == "$SOMAWORK_TAG" ]]
+          [[ "$(jq -r '.isDraft' <<<"$release")" == "false" ]]
+
+          temporary=$(mktemp -d)
+          trap 'rm -rf "$temporary"' EXIT HUP INT TERM
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            "$SOMAWORK_MANIFEST_URL" --output "$temporary/somawork-manifest.json"
+          actual_manifest_sha256=$(sha256sum "$temporary/somawork-manifest.json" | awk '{print $1}')
+          [[ "$actual_manifest_sha256" == "$SOMAWORK_MANIFEST_SHA256" ]]
+
+          scripts/validate-somawork-preflight.py \
+            --manifest "$temporary/somawork-manifest.json" \
+            --proof preflight/somawork-tap-preflight.json \
+            --expected-tag "$SOMAWORK_TAG" \
+            --expected-package "$SOMAWORK_PACKAGE" \
+            --expected-source-repository "$SOMAWORK_SOURCE_REPOSITORY" \
+            --expected-source-sha "$SOMAWORK_SOURCE_SHA" \
+            --expected-manifest-url "$SOMAWORK_MANIFEST_URL" \
+            --expected-manifest-sha256 "$SOMAWORK_MANIFEST_SHA256"
+
+          # The channel names its own runtime formula, so the other channel's
+          # path is never constructed here at all.
+          runtime_formula="Formula/$SOMAWORK_PACKAGE.rb"
+          runtime_template="Formula/$SOMAWORK_PACKAGE.rb.tmpl"
+          [ -f "$runtime_template" ]
+
+          # Every formula this run would replace contributes a baseline, and the
+          # release has to be at least as new as all of them. The controller is
+          # the one both channels write, so a stable bump is measured against a
+          # preview bump and vice versa — that only works because both channels
+          # compose the same repository-wide GitHub run id into their version.
+          # Before a formula's first release there is nothing to compare against.
+          baseline=()
+          for existing in Formula/somawork-cli.rb "$runtime_formula"; do
+            [ -f "$existing" ] || continue
+            current_version=$(sed -n 's/^  version "\(.*\)"$/\1/p' "$existing" | head -1)
+            [ -n "$current_version" ]
+            baseline+=(--not-below "$current_version")
+          done
+
+          scripts/render-somawork-formulae.py \
+            --tag "$SOMAWORK_TAG" \
+            --package "$SOMAWORK_PACKAGE" \
+            --source-repository "$SOMAWORK_SOURCE_REPOSITORY" \
+            --source-sha "$SOMAWORK_SOURCE_SHA" \
+            --manifest-url "$SOMAWORK_MANIFEST_URL" \
+            --manifest-sha256 "$SOMAWORK_MANIFEST_SHA256" \
+            --manifest "$temporary/somawork-manifest.json" \
+            "${baseline[@]}" \
+            --controller-template Formula/somawork-cli.rb.tmpl \
+            --controller-output Formula/somawork-cli.rb \
+            --runtime-template "$runtime_template" \
+            --runtime-output "$runtime_formula"
+
+          for formula in Formula/somawork-cli.rb "$runtime_formula"; do
+            ruby -c "$formula"
+            grep -Fq "# tag: $SOMAWORK_TAG" "$formula"
+            grep -Fq "# source: $SOMAWORK_SOURCE_SHA" "$formula"
+            grep -Fq "# manifest-sha256: $SOMAWORK_MANIFEST_SHA256" "$formula"
+            # The license is the tap's fixed metadata, not release input, so it
+            # is checked on the bytes about to be committed rather than trusted
+            # from the template. Whole line and exactly one of them: a substring
+            # match would pass `license "ISC-ish"`, a second license line, or a
+            # line commented out, and a formula copies this field verbatim to
+            # every user who installs it.
+            grep -Fqx '  license "ISC"' "$formula"
+            [[ "$(grep -c '^[[:space:]]*license ' "$formula")" == 1 ]]
+          done
+
+      - name: Commit the somawork bump
+        id: commit
+        env:
+          SOMAWORK_PACKAGE: ${{ github.event.client_payload.package }}
+          SOMAWORK_TAG: ${{ github.event.client_payload.tag }}
+          SOMAWORK_SOURCE_SHA: ${{ needs.preflight-somawork.outputs.source_sha }}
+          SOMAWORK_MANIFEST_SHA256: ${{ github.event.client_payload.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$SOMAWORK_PACKAGE" == "somawork-preview" || "$SOMAWORK_PACKAGE" == "somawork" ]]
+          runtime_formula="Formula/$SOMAWORK_PACKAGE.rb"
+          other_package=somawork
+          if [ "$SOMAWORK_PACKAGE" = somawork ]; then
+            other_package=somawork-preview
+          fi
+          # The opposite channel's formula must be exactly as this checkout found
+          # it: unmodified if it exists, still absent if it does not. `git status
+          # --porcelain` covers both, where `git diff` would miss a file the
+          # renderer had newly created.
+          [ -z "$(git status --porcelain -- "Formula/$other_package.rb")" ]
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/somawork-cli.rb "$runtime_formula"
+          if git diff --cached --quiet; then
+            # A repeated dispatch for a release already in the tap is a no-op,
+            # but only after proving the tree really is that release.
+            for formula in Formula/somawork-cli.rb "$runtime_formula"; do
+              grep -Fq "# tag: $SOMAWORK_TAG" "$formula"
+              grep -Fq "# source: $SOMAWORK_SOURCE_SHA" "$formula"
+              grep -Fq "# manifest-sha256: $SOMAWORK_MANIFEST_SHA256" "$formula"
+            done
+            echo "the tap already carries this exact immutable release"
+            echo "formula_commit=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Commit before rebase: the work is captured as a commit first, so a
+          # concurrent push on master replays it instead of colliding with a
+          # dirty tree.
+          git commit -m "$SOMAWORK_PACKAGE $SOMAWORK_TAG"
+          pushed=false
+          push_attempts=3
+          for attempt in $(seq 1 "$push_attempts"); do
+            if git pull --rebase && git push; then
+              pushed=true
+              break
+            fi
+            echo "push attempt $attempt of $push_attempts did not land; retrying"
+            sleep $((attempt * 5))
+          done
+          [ "$pushed" = true ]
+          formula_commit=$(git rev-parse HEAD)
+          remote_commit=$(git ls-remote origin refs/heads/master | awk '{print $1}')
+          [ "$remote_commit" = "$formula_commit" ]
+          echo "formula_commit=$formula_commit" >>"$GITHUB_OUTPUT"
+
+      - name: Record the exact tap dispatch evidence
+        env:
+          SOMAWORK_PACKAGE: ${{ github.event.client_payload.package }}
+          SOMAWORK_TAG: ${{ github.event.client_payload.tag }}
+          SOMAWORK_MANIFEST_URL: ${{ github.event.client_payload.manifest_url }}
+          SOMAWORK_MANIFEST_SHA256: ${{ github.event.client_payload.manifest_sha256 }}
+          SOMAWORK_SOURCE_REPOSITORY: ${{ github.event.client_payload.source_repository }}
+          SOMAWORK_SOURCE_SHA: ${{ needs.preflight-somawork.outputs.source_sha }}
+          FORMULA_COMMIT: ${{ steps.commit.outputs.formula_commit }}
+        run: |
+          set -euo pipefail
+          [ -n "$FORMULA_COMMIT" ]
+          [ "$(git rev-parse HEAD)" = "$FORMULA_COMMIT" ]
+          [[ "$SOMAWORK_PACKAGE" == "somawork-preview" || "$SOMAWORK_PACKAGE" == "somawork" ]]
+          runtime_formula="Formula/$SOMAWORK_PACKAGE.rb"
+          jq -n \
+            --slurpfile preflight preflight/somawork-tap-preflight.json \
+            --arg package "$SOMAWORK_PACKAGE" \
+            --arg runtime_formula "$runtime_formula" \
+            --arg tag "$SOMAWORK_TAG" \
+            --arg source_repository "$SOMAWORK_SOURCE_REPOSITORY" \
+            --arg source_sha "$SOMAWORK_SOURCE_SHA" \
+            --arg manifest_url "$SOMAWORK_MANIFEST_URL" \
+            --arg manifest_sha256 "$SOMAWORK_MANIFEST_SHA256" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg formula_commit "$FORMULA_COMMIT" \
+            --arg controller_blob "$(git rev-parse "$FORMULA_COMMIT:Formula/somawork-cli.rb")" \
+            --arg runtime_blob "$(git rev-parse "$FORMULA_COMMIT:$runtime_formula")" \
+            --argjson workflow_run_id "$GITHUB_RUN_ID" \
+            --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            '{
+              schema: "somawork.tap-dispatch.v1",
+              dispatch: {
+                package: $package,
+                tag: $tag,
+                source_repository: $source_repository,
+                source_sha: $source_sha,
+                manifest_url: $manifest_url,
+                manifest_sha256: $manifest_sha256
+              },
+              tap: {
+                repository: $repository,
+                formula_commit: $formula_commit,
+                formulae: ({"Formula/somawork-cli.rb": $controller_blob}
+                  + {($runtime_formula): $runtime_blob})
+              },
+              workflow: {
+                run_id: $workflow_run_id,
+                run_attempt: $workflow_run_attempt
+              },
+              preflight: $preflight[0]
+            }' >somawork-tap-dispatch.json
+
+      - name: Upload the exact tap dispatch evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: somawork-tap-dispatch
+          path: somawork-tap-dispatch.json
+          if-no-files-found: error
+          retention-days: 30
+
+# registered: somawork controller + the dispatched channel's runtime formula,
+#             bumped by soma-work's `somawork-release` repository_dispatch.
+#             Preview publication is automatic; a stable release stays
+#             user-gated, and a preview bump never writes the stable formula.
