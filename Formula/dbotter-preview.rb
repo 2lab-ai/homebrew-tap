@@ -1,25 +1,25 @@
 class DbotterPreview < Formula
   desc "Local Rust database client for MySQL and Redis (preview channel)"
   homepage "https://github.com/2lab-ai/dbotter"
-  version "2026.07.20.095048.29731634437.1"
+  version "2026.08.25.081710.32824018255.1"
   license "Apache-2.0"
 
   # Immutable release identity:
-  # tag: preview-2026-07-20-095048-29731634437-1-5f887198112c
-  # source: 5f887198112c46f308c50b6596610afb9720415b
-  # manifest: https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-20-095048-29731634437-1-5f887198112c/preview-manifest.json
-  # manifest-sha256: f5302654a20cffa51497aa1f504b44d80f721230099f27ce090df91d8e8cffce
+  # tag: preview-2026-08-25-081710-32824018255-1-0ab3bb2df44f
+  # source: 0ab3bb2df44f186d6b8b35c9b98a07120298041b
+  # manifest: https://github.com/2lab-ai/dbotter/releases/download/preview-2026-08-25-081710-32824018255-1-0ab3bb2df44f/preview-manifest.json
+  # manifest-sha256: 613681e31122b53c1cc4d5a6fa68bfae0e235aa5fb8dcdf782ab43cf6a2068d7
 
   depends_on :macos
 
   on_macos do
     on_arm do
-      url "https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-20-095048-29731634437-1-5f887198112c/dbotter-preview-aarch64.tar.gz"
-      sha256 "cef791d0964f5005df17a1d15c307201c3357e7c229cc9dd1e73b53f2379f5b2"
+      url "https://github.com/2lab-ai/dbotter/releases/download/preview-2026-08-25-081710-32824018255-1-0ab3bb2df44f/dbotter-preview-aarch64.tar.gz"
+      sha256 "cbe492d2a3ad79eef309bb8ab3c614da7c8982f76054af768bfab970e2971958"
     end
     on_intel do
-      url "https://github.com/2lab-ai/dbotter/releases/download/preview-2026-07-20-095048-29731634437-1-5f887198112c/dbotter-preview-x86_64.tar.gz"
-      sha256 "107cab58054b2e38d86e2c860eab89a62d504ba653376f29409e4e0b76b5afcb"
+      url "https://github.com/2lab-ai/dbotter/releases/download/preview-2026-08-25-081710-32824018255-1-0ab3bb2df44f/dbotter-preview-x86_64.tar.gz"
+      sha256 "2b45f6c15bbbd45976f8d8a5683c907094ed2da89d929be8985022698f134e77"
     end
   end
 
