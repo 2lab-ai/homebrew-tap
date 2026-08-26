@@ -3,19 +3,19 @@ class SomaworkCli < Formula
   homepage "https://github.com/2lab-ai/soma-work"
 
   # Immutable release identity, verified before this file was written:
-  # tag: somawork-preview-v1.0.0-32939873713
-  # source: 8da20f3092da1748954f3e617e28103932d81a1e
+  # tag: somawork-preview-v1.0.0-32971112778
+  # source: e96cd74f5b05121662237cd445ce34ac03ddab1d
   # channel: preview
   # package-version: 1.0.0
   # platform: darwin-arm64
   # layout-version: 1
   # minimum-node: 20.0.0
-  # manifest: https://github.com/2lab-ai/soma-work/releases/download/somawork-preview-v1.0.0-32939873713/somawork-manifest.json
-  # manifest-sha256: 873ff16cddddc1d8e976ee0457a658647bc92cf1e955921552c3759cd119d079
+  # manifest: https://github.com/2lab-ai/soma-work/releases/download/somawork-preview-v1.0.0-32971112778/somawork-manifest.json
+  # manifest-sha256: 24cb4ddfe81dc99dd9bb6b238d45513c0a19cd4d97f97c78357115c1c7195ba5
 
-  url "https://github.com/2lab-ai/soma-work/releases/download/somawork-preview-v1.0.0-32939873713/somawork-cli-1.0.0-darwin-arm64.tar.gz"
-  version "1.0.0.32939873713"
-  sha256 "78716a80de6c415929e170412d54184178592a57886c7ff216e43133138cbe16"
+  url "https://github.com/2lab-ai/soma-work/releases/download/somawork-preview-v1.0.0-32971112778/somawork-cli-1.0.0-darwin-arm64.tar.gz"
+  version "1.0.0.32971112778"
+  sha256 "00e60615667282098ac684f790294e25f15670e912e931322aa362564e8d974b"
 
   # Fixed project metadata, not a manifest field: soma-work's LICENSE and its
   # package.json both say ISC, and no release payload gets to name this.
