@@ -1,0 +1,60 @@
+class SomaworkCli < Formula
+  desc "Controller CLI that sets up and supervises somawork runtime kegs"
+  homepage "https://github.com/2lab-ai/soma-work"
+
+  # Immutable release identity, verified before this file was written:
+  # tag: @TAG@
+  # source: @SOURCE_SHA@
+  # channel: @CHANNEL@
+  # package-version: @PACKAGE_VERSION@
+  # platform: @PLATFORM@
+  # layout-version: @LAYOUT_VERSION@
+  # minimum-node: @MINIMUM_NODE@
+  # manifest: @MANIFEST_URL@
+  # manifest-sha256: @MANIFEST_SHA256@
+
+  url "@CONTROLLER_URL@"
+  version "@VERSION@"
+  sha256 "@CONTROLLER_SHA256@"
+
+  # Fixed project metadata, not a manifest field: soma-work's LICENSE and its
+  # package.json both say ISC, and no release payload gets to name this.
+  license "ISC"
+
+  # Homebrew's `node` is the only Node this formula will run under, and it is
+  # always at or above the manifest's floor recorded above; the renderer refuses
+  # a manifest that raises the floor past what this tap has checked.
+  depends_on "2lab-ai/tap/llmux"
+  depends_on arch: :arm64
+  depends_on :macos
+  depends_on "node"
+
+  def install
+    # The archive is a flat tree whose root IS the install prefix. That is not
+    # cosmetic: the controller resolves its own package.json two directories
+    # above its entry, so `@CONTROLLER_ENTRY@` has to keep that exact
+    # relationship to the manifest at the keg root. Dotfiles are installed too —
+    # the release marker is one.
+    prefix.install Dir["*"] + Dir[".[^.]*"]
+    bin.install_symlink prefix/"@CONTROLLER_ENTRY@" => "somawork"
+  end
+
+  def caveats
+    <<~EOS
+      somawork needs a runtime keg beside this controller. Install the profile
+      you want, then run its setup:
+
+        brew install 2lab-ai/tap/somawork-preview
+        somawork setup --profile preview
+
+        brew install 2lab-ai/tap/somawork
+        somawork setup --profile production
+    EOS
+  end
+
+  test do
+    assert_predicate prefix/"@CONTROLLER_ENTRY@", :executable?
+    assert_predicate prefix/"@CONTROLLER_MANIFEST@", :file?
+    assert_match "@PACKAGE_VERSION@", shell_output("#{bin}/somawork --version")
+  end
+end

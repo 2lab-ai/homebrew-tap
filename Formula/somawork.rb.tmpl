@@ -1,0 +1,60 @@
+class Somawork < Formula
+  desc "Production-profile runtime tree resolved by the somawork controller"
+  homepage "https://github.com/2lab-ai/soma-work"
+
+  # Immutable release identity, verified before this file was written:
+  # tag: @TAG@
+  # source: @SOURCE_SHA@
+  # channel: @CHANNEL@
+  # package-version: @PACKAGE_VERSION@
+  # platform: @PLATFORM@
+  # layout-version: @LAYOUT_VERSION@
+  # manifest: @MANIFEST_URL@
+  # manifest-sha256: @MANIFEST_SHA256@
+
+  url "@RUNTIME_URL@"
+  version "@VERSION@"
+  sha256 "@RUNTIME_SHA256@"
+
+  # Fixed project metadata, not a manifest field: soma-work's LICENSE and its
+  # package.json both say ISC, and no release payload gets to name this.
+  license "ISC"
+
+  # Never linked, for two reasons that both matter: the controller finds this
+  # tree by asking `brew --prefix somawork` and reading directly beneath it, and
+  # the preview runtime is a second keg that must be able to sit beside this one
+  # without either of them owning a shared name.
+  keg_only "it is a runtime tree the somawork controller resolves through `brew --prefix`, not a linkable toolchain"
+
+  # The controller owns the only executable on PATH. This keg carries a runtime
+  # tree and nothing else.
+  depends_on "2lab-ai/tap/somawork-cli"
+  depends_on arch: :arm64
+  depends_on :macos
+
+  def install
+    # Flat at the keg prefix: `brew --prefix somawork` is the runtime root the
+    # controller canonicalizes and reads `@RUNTIME_DAEMON@` from, so nothing may
+    # be nested below it. Dotfiles are installed too — the profile marker is one.
+    prefix.install Dir["*"] + Dir[".[^.]*"]
+  end
+
+  def caveats
+    <<~EOS
+      Point the controller at this runtime:
+
+        somawork setup --profile production
+    EOS
+  end
+
+  test do
+    assert_predicate prefix/"@RUNTIME_MARKER@", :file?
+    assert_predicate prefix/"@RUNTIME_MANIFEST@", :file?
+    assert_predicate prefix/"@RUNTIME_CONTROLLER_ENTRY@", :file?
+    assert_predicate prefix/"@RUNTIME_SUPERVISOR@", :file?
+    assert_predicate prefix/"@RUNTIME_DAEMON@", :file?
+    marker = JSON.parse((prefix/"@RUNTIME_MARKER@").read)
+    assert_equal "production", marker["profile"]
+    assert_equal "@PACKAGE_VERSION@", marker["version"]
+  end
+end

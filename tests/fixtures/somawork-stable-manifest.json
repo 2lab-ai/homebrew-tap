@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "layoutVersion": 1,
+  "channel": "stable",
+  "version": "0.1.0",
+  "tag": "somawork-v0.1.0-987654322",
+  "sourceSha": "89abcdef0123456789abcdef0123456789abcdef",
+  "platform": "darwin-arm64",
+  "minimumNode": "20.0.0",
+  "baseUrl": "https://github.com/2lab-ai/soma-work/releases/download/somawork-v0.1.0-987654322",
+  "layout": {
+    "install": "prefix",
+    "controller": {
+      "entry": "libexec/bin/somawork",
+      "manifest": "package.json"
+    },
+    "runtime": {
+      "marker": ".somawork-package.json",
+      "manifest": "package.json",
+      "controllerEntry": "dist/cli/index.js",
+      "supervisor": "dist/run-with-rotating-logs.js",
+      "daemon": "dist/index.js"
+    }
+  },
+  "assets": [
+    {
+      "package": "somawork-cli",
+      "profile": null,
+      "filename": "somawork-cli-0.1.0-darwin-arm64.tar.gz",
+      "url": "https://github.com/2lab-ai/soma-work/releases/download/somawork-v0.1.0-987654322/somawork-cli-0.1.0-darwin-arm64.tar.gz",
+      "sha256": "b881c3b7c13fabac4339a820864c3c8e9dd96f1f93ab161f4acce1366683ac20",
+      "bytes": 56
+    },
+    {
+      "package": "somawork",
+      "profile": "production",
+      "filename": "somawork-0.1.0-darwin-arm64.tar.gz",
+      "url": "https://github.com/2lab-ai/soma-work/releases/download/somawork-v0.1.0-987654322/somawork-0.1.0-darwin-arm64.tar.gz",
+      "sha256": "a603cd7d7575c0f133e4051d2198ffb0a66160e0f0f30d660e0a7e5979f553d6",
+      "bytes": 52
+    },
+    {
+      "package": "somawork-preview",
+      "profile": "preview",
+      "filename": "somawork-preview-0.1.0-darwin-arm64.tar.gz",
+      "url": "https://github.com/2lab-ai/soma-work/releases/download/somawork-v0.1.0-987654322/somawork-preview-0.1.0-darwin-arm64.tar.gz",
+      "sha256": "4a81af8c59b6732c791367993486c6f4f2d64961576e36ca3f83f2f519a4ade7",
+      "bytes": 60
+    }
+  ]
+}
