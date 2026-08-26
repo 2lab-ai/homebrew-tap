@@ -178,6 +178,33 @@ build_release() {
     >"$work/$channel-manifest.json"
 }
 
+# An archive laid out exactly like the official Slack CLI release: `./bin/slack`,
+# mode 0755, and nothing else — no LICENSE, no NOTICE. That layout was read off
+# the real v4.6.0 macOS arm64 asset with `tar -tzf`, and it is what the tap's
+# slack-cli formula is written against. Reproducing it here means a formula that
+# names a path the release does not carry fails in this harness rather than on a
+# user's machine.
+SLACK_CLI_VERSION=4.6.0
+SLACK_CLI_FINGERPRINT=d41d8cd98f00b204e9800998ecf8427e
+slack_archive="$work/assets/slack-cli/slack_cli_${SLACK_CLI_VERSION}_macOS_arm64.tar.gz"
+
+build_slack_cli() {
+  local tree="$work/build/slack-cli"
+  mkdir -p "$tree/bin" "$(dirname "$slack_archive")"
+  cat >"$tree/bin/slack" <<SLACK
+#!/bin/sh
+case "\$1" in
+  _fingerprint) echo $SLACK_CLI_FINGERPRINT ;;
+  version) echo "Using slack v$SLACK_CLI_VERSION" ;;
+  *) exit 1 ;;
+esac
+SLACK
+  chmod 0755 "$tree/bin/slack"
+  ( cd "$tree" && tar -czf "$slack_archive" . )
+}
+
+build_slack_cli
+
 build_release preview "$PREVIEW_TAG" "$PREVIEW_SOURCE_SHA"
 build_release stable "$STABLE_TAG" "$STABLE_SOURCE_SHA"
 
@@ -260,6 +287,89 @@ localize stable somawork-cli
 localize stable somawork
 localize preview somawork-preview
 
+# --- the Slack CLI in the controller's dependency closure ---------------------
+#
+# `somawork setup` cannot log a workspace in without the official Slack CLI, and
+# soma-work's setup code (src/cli/setup/slack-auth.ts) says packaging owns that
+# binary rather than installing it. So the closure the controller declares has to
+# end at something that puts `slack` on PATH — checked here mechanically, not by
+# reading a README that says so.
+#
+# Three steps: take the tap-qualified dependencies out of the rendered
+# controller; require each to be a formula this tap actually defines; take the
+# executables those formulae install and require `slack` among them. Then replay
+# the slack-cli install line against the official-layout archive built above, so
+# a formula naming a path the release does not carry fails here too.
+#
+# The real `brew install` proof is in the install stage below. This part runs
+# whether or not an isolated prefix exists, because a closure that has stopped
+# provisioning `slack` is a defect either way.
+
+closure_executables=""
+slack_dependency=""
+while IFS= read -r dep; do
+  [[ -n "$dep" ]] || continue
+  dep_formula="$root/Formula/$dep.rb"
+  [[ -f "$dep_formula" ]] \
+    || fail "the controller depends on 2lab-ai/tap/$dep, which this tap does not define"
+  if [[ "$dep" == slack-cli ]]; then
+    slack_dependency="$dep_formula"
+  fi
+  closure_executables="$closure_executables
+$(sed -n -e 's/^.*bin\.install[^=]*=> "\([^"]*\)".*$/\1/p' \
+         -e 's/^ *bin\.install "\([^"]*\)"$/\1/p' "$dep_formula" | sed 's|.*/||')"
+done < <(sed -n 's|^  depends_on "2lab-ai/tap/\(.*\)"$|\1|p' "$canonical/somawork-cli.rb")
+
+printf '%s\n' "$closure_executables" | grep -Fqx slack \
+  || fail "the controller's dependency closure provisions no slack executable"
+[[ -n "$slack_dependency" ]] || fail "the controller does not depend on this tap's Slack CLI formula"
+
+# The raw archive layout, kept as its own assertion so the fixture stays a
+# faithful stand-in: `tar -tzf` on the pinned v4.6.0 asset lists exactly `./`,
+# `./bin/` and `./bin/slack`.
+[[ "$(tar -tzf "$slack_archive" | sort | tr '\n' ' ')" == "./ ./bin/ ./bin/slack " ]] \
+  || fail "the fixture archive no longer has the official release's tar layout"
+
+# …and then what Homebrew actually hands `def install`, which is not that. This
+# suite used to replay a plain `tar -xzf` and went green on a formula that
+# installed `bin/slack`; a live `brew install` then died with
+# `Errno::ENOENT: bin/slack`, because extraction leaves one top-level entry and
+# the download strategy chdirs into a lone directory before `install` runs
+# (Library/Homebrew/download_strategy/abstract_download_strategy.rb, `chdir`).
+# So the staging is done by Homebrew's own UnpackStrategy through `brew ruby`,
+# rather than by this script re-deriving a rule it got wrong once already.
+cat >"$work/homebrew-stage.rb" <<'RUBY'
+require "unpack_strategy"
+archive = Pathname(ARGV.fetch(0))
+staged = Pathname(ARGV.fetch(1))
+staged.mkpath
+Dir.chdir(staged) do
+  UnpackStrategy.detect(archive, prioritize_extension: true)
+                .extract_nestedly(basename: archive.basename, prioritize_extension: true, verbose: false)
+  entries = Dir["*"]
+  raise "Empty archive" if entries.empty?
+  if entries.length == 1 && File.directory?(entries.fetch(0))
+    puts File.join(Dir.pwd, entries.fetch(0))
+  else
+    puts Dir.pwd
+  end
+end
+RUBY
+slack_stage="$work/slack-stage"
+rm -rf "$slack_stage"
+slack_buildpath="$(brew ruby "$work/homebrew-stage.rb" "$slack_archive" "$slack_stage" | tail -1)"
+[[ -d "$slack_buildpath" ]] \
+  || fail "Homebrew's own unpack produced no build directory for the Slack CLI archive"
+[[ "$slack_buildpath" != "$slack_stage" ]] \
+  || fail "Homebrew no longer chdirs past the archive's single top-level directory, so slack-cli's install path is stale"
+
+slack_source="$(sed -n 's/^ *bin\.install "\([^"]*\)".*$/\1/p' "$slack_dependency" | head -1)"
+[[ -n "$slack_source" ]] || fail "slack-cli does not name the path it installs as slack"
+[[ -x "$slack_buildpath/$slack_source" ]] \
+  || fail "slack-cli installs \"$slack_source\", which is not an executable in the directory Homebrew stages for it"
+[[ "$("$slack_buildpath/$slack_source" _fingerprint)" == "$SLACK_CLI_FINGERPRINT" ]] \
+  || fail "the replayed slack-cli install did not yield the public Slack CLI"
+
 echo "somawork install harness: prepared"
 echo "  tap:      $tap"
 echo "  archives: $work/assets"
@@ -290,6 +400,7 @@ somawork install harness: install stage NOT run — no isolated Homebrew prefix.
     brew --prefix somawork-preview   # runtime root, keg-local
     brew --prefix somawork           # second runtime root, coexisting
     somawork --version               # the single linked controller
+    slack _fingerprint               # the Slack CLI the closure provisions
 EOS
   exit 0
 fi
@@ -322,6 +433,13 @@ done
 [[ "$(jq -r .profile "$production_root/.somawork-package.json")" == production ]] \
   || fail "the production keg does not carry the production profile"
 [[ -L "$prefix/bin/somawork" ]] || fail "the controller did not link somawork"
+# The dependency closure, resolved by Homebrew rather than by this script: the
+# controller declares 2lab-ai/tap/slack-cli, so installing the controller has to
+# have put the official Slack CLI on this prefix's PATH.
+[[ -x "$prefix/bin/slack" ]] \
+  || fail "the controller's dependency closure did not put a slack executable on PATH"
+[[ "$("$prefix/bin/slack" _fingerprint)" == "$SLACK_CLI_FINGERPRINT" ]] \
+  || fail "the slack on this prefix's PATH is not the official Slack CLI"
 [[ "$("$prefix/bin/somawork" --version)" == "$VERSION" ]] \
   || fail "the linked controller does not report the release version"
 

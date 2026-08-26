@@ -15,6 +15,10 @@ open "$(brew --prefix dbotter-preview)/Dbotter Preview.app"
 | `pdc-preview` | Preview channel of Palladium, tracking `main`. Installs as `pdc-preview`, so it coexists with a stable `pdc`. |
 | `xfx-preview` | Preview channel of [xfx](https://github.com/2lab-ai/xfx), a Rust port of the `fx` agentic coding CLI. Tracks the latest `preview-*` prerelease; the formula is `xfx-preview` but the installed executable is `xfx`. |
 | `xfx` | Stable xfx channel — appears automatically when the first `v*` stable release is cut. Installs the same `xfx` executable, whose `xfx status --json` reports `"build_channel": "release"`. |
+| `somawork-cli` | Controller for [soma-work](https://github.com/2lab-ai/soma-work), the agent harness. Installs the `somawork` executable and is the only formula of the three that links one. It does nothing on its own: it resolves a runtime keg through `brew --prefix`, so install it together with a channel below and then run `somawork setup`. |
+| `somawork-preview` | Preview-channel runtime tree for somawork. `keg_only` — the controller resolves it by prefix rather than linking it — so it coexists with the production channel. Activate with `somawork setup --profile preview`. |
+| `somawork` | Production-channel runtime tree for somawork, on the same `keg_only` terms. Activate with `somawork setup --profile production`. Preview and production releases are published separately and neither channel can write the other's formula. |
+| `slack-cli` | The official [Slack CLI](https://github.com/slackapi/slack-cli), pinned to one immutable upstream release for macOS Apple Silicon and installed as `slack`. It is here because `somawork setup` logs a workspace in through it and a Homebrew formula cannot depend on a cask; installing `somawork-cli` pulls it in, so the clean journey stays one package install plus `somawork setup`. |
 
 ```bash
 brew install 2lab-ai/tap/xfx-preview
