@@ -24,7 +24,15 @@ class SomaworkCli < Formula
   # Homebrew's `node` is the only Node this formula will run under, and it is
   # always at or above the manifest's floor recorded above; the renderer refuses
   # a manifest that raises the floor past what this tap has checked.
+  #
+  # The Slack CLI is a dependency for the same reason: `somawork setup` logs a
+  # workspace in through it, and soma-work's setup code treats a missing `slack`
+  # as a packaging failure rather than something it installs. A formula cannot
+  # depend on a cask, so this tap packages the official CLI as
+  # 2lab-ai/tap/slack-cli and the clean journey stays one package install plus
+  # `somawork setup`.
   depends_on "2lab-ai/tap/llmux"
+  depends_on "2lab-ai/tap/slack-cli"
   depends_on arch: :arm64
   depends_on :macos
   depends_on "node"

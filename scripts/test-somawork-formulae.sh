@@ -550,6 +550,8 @@ render_stable
 grep -Fq 'depends_on "node"' "$controller" || fail "controller does not depend on Homebrew node"
 grep -Fq 'depends_on "2lab-ai/tap/llmux"' "$controller" \
   || fail "controller does not depend on the fully-qualified llmux formula"
+grep -Fq 'depends_on "2lab-ai/tap/slack-cli"' "$controller" \
+  || fail "controller does not depend on the fully-qualified Slack CLI formula"
 grep -Fq '# minimum-node: 20.0.0' "$controller" || fail "controller does not record the Node floor"
 grep -Fq 'depends_on "2lab-ai/tap/somawork-cli"' "$controller" && fail "controller depends on itself"
 grep -Fq 'keg_only' "$controller" && fail "controller is keg_only and could not link somawork"
@@ -602,6 +604,77 @@ for formula in "$controller" "$production" "$preview"; do
   grep -Eiq '(token|password|secret|credential|api[_ -]?key)' "$formula" \
     && fail "$formula suggests a credential: $formula"
 done
+
+# ---------------------------------------------------------------------------
+# The Slack CLI the controller depends on
+#
+# `somawork setup` logs a workspace in through the official Slack CLI, and
+# soma-work's own setup code (src/cli/setup/slack-auth.ts) is explicit that
+# packaging owns that binary: a missing `slack` is reported as a precondition
+# the packager failed to meet, not something setup goes and installs. A Homebrew
+# formula cannot depend on a cask, so the dependency target has to be a formula
+# in this tap.
+#
+# Which makes "the controller depends on slack-cli" worth nothing on its own —
+# slack-cli could quietly become any archive at all. So the target is pinned
+# here too: the exact official v4.6.0 macOS arm64 asset, the digest GitHub's
+# release and Homebrew's own official cask both publish, and an install that
+# yields `bin/slack`. Repointing any of those turns this suite red.
+# ---------------------------------------------------------------------------
+
+slack_formula="$root/Formula/slack-cli.rb"
+[[ -f "$slack_formula" ]] \
+  || fail "the controller's Slack CLI dependency target is missing: Formula/slack-cli.rb"
+ruby -c "$slack_formula" >/dev/null || fail "Formula/slack-cli.rb is not valid Ruby"
+grep -Fqx '  version "4.6.0"' "$slack_formula" \
+  || fail "slack-cli does not pin the exact upstream version"
+grep -Fqx '  url "https://github.com/slackapi/slack-cli/releases/download/v4.6.0/slack_cli_4.6.0_macOS_arm64.tar.gz"' "$slack_formula" \
+  || fail "slack-cli does not pin the official v4.6.0 macOS arm64 release asset"
+grep -Fqx '  sha256 "c1586ad5625a31d802abb31aa4b023bd12fe3c794221aaf17f6814aaa321a792"' "$slack_formula" \
+  || fail "slack-cli does not pin the digest the release and the official cask agree on"
+[[ "$(grep -c '^  url "' "$slack_formula")" == 1 ]] || fail "slack-cli does not pin exactly one url"
+[[ "$(grep -c '^  sha256 "' "$slack_formula")" == 1 ]] \
+  || fail "slack-cli does not pin exactly one archive sha256"
+grep -Fqx '  license "Apache-2.0"' "$slack_formula" \
+  || fail "slack-cli does not declare the upstream Apache-2.0 license"
+grep -Fq 'depends_on arch: :arm64' "$slack_formula" \
+  || fail "slack-cli does not refuse architectures its archive has no bits for"
+grep -Fq 'depends_on :macos' "$slack_formula" \
+  || fail "slack-cli does not refuse platforms its archive has no bits for"
+
+# The archive is `./bin/slack` and nothing else — no LICENSE, no NOTICE, checked
+# with `tar -tzf` against the real asset. Apache-2.0 4(a) asks that a copy of
+# the License travel with the object form, so the upstream LICENSE is a second
+# pinned download rather than an assumption about what is in the tarball.
+# The path the formula installs is Homebrew's, not the tarball's. Extraction
+# leaves one top-level entry, `bin/`, and the download strategy chdirs into a
+# lone directory before `install` runs (Library/Homebrew/download_strategy/
+# abstract_download_strategy.rb, `chdir`), so the build directory *is* that
+# `bin/` and the executable sits at its root. Naming the tar member `bin/slack`
+# here is an `Errno::ENOENT` at install time — which is how it was found, on a
+# live install, after this suite had already gone green on the wrong path. The
+# harness now replays Homebrew's own unpack rather than a raw `tar -xzf`.
+grep -Fq 'bin.install "slack"' "$slack_formula" \
+  || fail "slack-cli does not install the Homebrew-normalized slack path"
+grep -Fq 'bin.install "bin/slack"' "$slack_formula" \
+  && fail "slack-cli installs the raw tar path Homebrew's staging has already chdir'd past"
+grep -Fq 'resource "license" do' "$slack_formula" \
+  || fail "slack-cli redistributes an Apache-2.0 binary without carrying the License"
+grep -Fq 'url "https://raw.githubusercontent.com/slackapi/slack-cli/v4.6.0/LICENSE", using: :nounzip' "$slack_formula" \
+  || fail "slack-cli's License is not taken from the immutable upstream tag"
+grep -Fq 'sha256 "a65d087cf010a52f8736da6b387df1feb7089e2c0636ef21cb86bef05940e0a4"' "$slack_formula" \
+  || fail "slack-cli's License is not pinned by digest"
+grep -Fq 'prefix.install "LICENSE"' "$slack_formula" \
+  || fail "slack-cli fetches the License but does not install it into the keg"
+
+# `slack` is a name several unrelated tools answer to, so a test that only ran
+# the binary would pass on the wrong one. `_fingerprint` is the public CLI's own
+# identity command and answers the same constant in every environment; the
+# version line pins what this formula claims to have installed.
+grep -Fq 'd41d8cd98f00b204e9800998ecf8427e' "$slack_formula" \
+  || fail "slack-cli's test does not check the public CLI fingerprint"
+grep -Fq 'Using slack v#{version}' "$slack_formula" \
+  || fail "slack-cli's test does not check the version the formula claims"
 
 # ---------------------------------------------------------------------------
 # The license, in all three formulae and under mutation
