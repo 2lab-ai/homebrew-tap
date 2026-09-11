@@ -9,14 +9,15 @@ cask "llmux-islands" do
 
   # Installing the app also installs the llmux CLI it talks to.
   depends_on formula: "2lab-ai/tap/llmux"
+  depends_on :macos
 
   app "LlmuxIslands.app"
 
-  postflight do
+  postflight_steps do
     # Ad-hoc signed (no Developer ID notarization yet): drop the download
     # quarantine so Gatekeeper allows first launch.
-    system_command "/usr/bin/xattr",
-                   args: ["-dr", "com.apple.quarantine", "#{appdir}/LlmuxIslands.app"]
+    run "/usr/bin/xattr",
+        args: ["-dr", "com.apple.quarantine", "{{appdir}}/LlmuxIslands.app"]
   end
 
   uninstall quit: "ai.2lab.LlmuxIslands"
