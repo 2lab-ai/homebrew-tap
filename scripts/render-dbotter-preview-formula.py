@@ -264,8 +264,8 @@ def render(template: str, replacements: dict[str, str]) -> str:
     rendered = template
     for placeholder, value in replacements.items():
         count = rendered.count(placeholder)
-        if count != 1:
-            raise ContractError(f"template placeholder count is not one: {placeholder}")
+        if count < 1:
+            raise ContractError(f"template placeholder is missing: {placeholder}")
         rendered = rendered.replace(placeholder, value)
     if re.search(r"@[A-Z0-9_]+@", rendered):
         raise ContractError("template contains an unknown placeholder")

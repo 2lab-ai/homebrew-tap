@@ -23,6 +23,21 @@ class DbotterPreview < Formula
     end
   end
 
+  on_linux do
+    # There is no Linux build. These URLs exist only so brew on Linux can load
+    # the formula (otherwise every command crashes with "formula requires at
+    # least a URL"); depends_on :macos blocks installation, so they are never
+    # downloaded.
+    on_arm do
+      url "https://github.com/2lab-ai/dbotter/releases/download/preview-2026-08-25-081710-32824018255-1-0ab3bb2df44f/dbotter-preview-aarch64.tar.gz"
+      sha256 "cbe492d2a3ad79eef309bb8ab3c614da7c8982f76054af768bfab970e2971958"
+    end
+    on_intel do
+      url "https://github.com/2lab-ai/dbotter/releases/download/preview-2026-08-25-081710-32824018255-1-0ab3bb2df44f/dbotter-preview-x86_64.tar.gz"
+      sha256 "2b45f6c15bbbd45976f8d8a5683c907094ed2da89d929be8985022698f134e77"
+    end
+  end
+
   link_overwrite "bin/dbotter"
 
   def install

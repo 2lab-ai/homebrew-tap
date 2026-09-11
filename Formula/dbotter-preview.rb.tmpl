@@ -23,6 +23,21 @@ class DbotterPreview < Formula
     end
   end
 
+  on_linux do
+    # There is no Linux build. These URLs exist only so brew on Linux can load
+    # the formula (otherwise every command crashes with "formula requires at
+    # least a URL"); depends_on :macos blocks installation, so they are never
+    # downloaded.
+    on_arm do
+      url "@URL_MACOS_AARCH64@"
+      sha256 "@SHA_MACOS_AARCH64@"
+    end
+    on_intel do
+      url "@URL_MACOS_X86_64@"
+      sha256 "@SHA_MACOS_X86_64@"
+    end
+  end
+
   link_overwrite "bin/dbotter"
 
   def install
