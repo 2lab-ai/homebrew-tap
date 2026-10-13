@@ -1,28 +1,28 @@
 class HarnPreview < Formula
   desc "Lists the harness an AI coding agent loads for a directory, reversibly"
   homepage "https://github.com/2lab-ai/harn"
-  version "2026.10.13.0905"
+  version "2026.10.13.1411"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "https://github.com/2lab-ai/harn/releases/download/preview-2026-10-13-0905-54bc8d7f04e1/harn-macos-aarch64"
-      sha256 "f300af29c8d53488cbf60375d4602fea223ce21c8842ad29959d46ca5e62f887"
+      url "https://github.com/2lab-ai/harn/releases/download/preview-2026-10-13-1411-a21f2a13a53d/harn-macos-aarch64"
+      sha256 "ea24b2b851a72aef89d28acc740cd17f269ec9948d3ddbd7cda72fdba5289ac4"
     end
     on_intel do
-      url "https://github.com/2lab-ai/harn/releases/download/preview-2026-10-13-0905-54bc8d7f04e1/harn-macos-x86_64"
-      sha256 "574bb26eba7fc010be4e9f51996aed3f49ace962187c21e58775c3871a375487"
+      url "https://github.com/2lab-ai/harn/releases/download/preview-2026-10-13-1411-a21f2a13a53d/harn-macos-x86_64"
+      sha256 "dfa51123c1d2fdc246f6f5abe7e85320799745ff1621fbc8a4d4d5e49303c95f"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/2lab-ai/harn/releases/download/preview-2026-10-13-0905-54bc8d7f04e1/harn-linux-aarch64"
-      sha256 "ff04136f7cc7ab9bc248c444fbafdfffa63f05a955f691b8f8faf19c96e6845d"
+      url "https://github.com/2lab-ai/harn/releases/download/preview-2026-10-13-1411-a21f2a13a53d/harn-linux-aarch64"
+      sha256 "f3e43682a7f0098710817b3c03191f2623b5382c92547440493c168fc09b0c32"
     end
     on_intel do
-      url "https://github.com/2lab-ai/harn/releases/download/preview-2026-10-13-0905-54bc8d7f04e1/harn-linux-x86_64"
-      sha256 "ae8f63509cde88274f45e89e4ae64f8098173c96d802943351669fc04fc413f8"
+      url "https://github.com/2lab-ai/harn/releases/download/preview-2026-10-13-1411-a21f2a13a53d/harn-linux-x86_64"
+      sha256 "af5448379693a12fd3baa7c4f55754fa948f609fd17a47cdc1a817ea551b1150"
     end
   end
 
