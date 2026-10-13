@@ -9,6 +9,8 @@ open "$(brew --prefix dbotter-preview)/Dbotter Preview.app"
 |---|---|
 | `dbotter-preview` | Preview channel of [dbotter](https://github.com/2lab-ai/dbotter), a local Rust database client for MySQL and Redis. Installs the exact manifest-pinned macOS app and exposes its embedded CLI as `dbotter`. |
 | `dbotter` | Stable dbotter channel — appears automatically when the first `v*` stable release is cut. |
+| `harn-preview` | Preview channel of [harn](https://github.com/2lab-ai/harn), which lists what an AI coding agent loads for a directory and turns items off reversibly. Tracks the latest `preview-*` prerelease and installs the `harn` executable — appears automatically when the first preview prerelease is cut. |
+| `harn` | Stable harn channel — appears automatically when the first `v*` stable release is cut. Installs the same `harn` executable, so hold one channel at a time. |
 | `herdr-mx-preview` | **herdr, multiplexed further** — preview channel of [herdr-mx](https://github.com/2lab-ai/herdr-mx), the friendly downstream distribution of [herdr](https://github.com/ogulcancelik/herdr) with a full multi-remote client. Tracks the latest `mx`-branch prerelease; installs as `herdr` (drop-in; conflicts with the core `herdr` formula). |
 | `herdr-mx` | Stable channel — appears automatically when the first stable release is cut. |
 | `pdc` | Stable channel of [Palladium](https://github.com/labforadvancedstudy/palladium-a), a self-hosting systems language that compiles to C. Builds from the tagged source. Installs `pdc` plus the C runtime it links against, in `share/palladium/runtime`. |
