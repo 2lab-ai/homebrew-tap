@@ -1,0 +1,38 @@
+class Zwallet < Formula
+  desc "Local wallet CLI for AI agents: create, balance, contract calls, transfers"
+  homepage "https://github.com/2lab-ai/zwallet"
+  version "@VERSION@"
+  license "MIT"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/2lab-ai/zwallet/releases/download/v@VERSION@/zwallet-macos-aarch64"
+      sha256 "@SHA_MACOS_AARCH64@"
+    end
+    on_intel do
+      url "https://github.com/2lab-ai/zwallet/releases/download/v@VERSION@/zwallet-macos-x86_64"
+      sha256 "@SHA_MACOS_X86_64@"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/2lab-ai/zwallet/releases/download/v@VERSION@/zwallet-linux-aarch64"
+      sha256 "@SHA_LINUX_AARCH64@"
+    end
+    on_intel do
+      url "https://github.com/2lab-ai/zwallet/releases/download/v@VERSION@/zwallet-linux-x86_64"
+      sha256 "@SHA_LINUX_X86_64@"
+    end
+  end
+
+  link_overwrite "bin/zwallet"
+
+  def install
+    bin.install Dir["zwallet-*"].first => "zwallet"
+  end
+
+  test do
+    assert_match "zwallet #{version} (release ", shell_output("#{bin}/zwallet --version")
+  end
+end
