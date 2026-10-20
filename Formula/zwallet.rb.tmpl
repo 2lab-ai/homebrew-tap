@@ -33,6 +33,6 @@ class Zwallet < Formula
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/zwallet --version")
+    assert_match "zwallet #{version} (release ", shell_output("#{bin}/zwallet --version")
   end
 end

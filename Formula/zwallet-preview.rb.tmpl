@@ -33,6 +33,6 @@ class ZwalletPreview < Formula
   end
 
   test do
-    assert_match "preview", shell_output("#{bin}/zwallet --version")
+    assert_match "(preview ", shell_output("#{bin}/zwallet --version")
   end
 end
