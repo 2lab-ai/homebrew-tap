@@ -1,6 +1,6 @@
 cask "llmux-islands" do
-  version "0.2.25"
-  sha256 "72b056da03e19100b318e678320355d26dd2210f75c77078d285f03bc89d311a"
+  version "0.2.26"
+  sha256 "49da79ea82b735d545b25316497d94858e160ba8673d0ebae5fdc5ec82128bc1"
 
   url "https://github.com/2lab-ai/llmux/releases/download/v#{version}/LlmuxIslands-#{version}.zip"
   name "llmux islands"
