@@ -1,28 +1,28 @@
 class LlmuxPreview < Formula
   desc "Multi-account multi-provider LLM proxy for Claude Code with quota-maximizing scheduling"
   homepage "https://github.com/2lab-ai/llmux"
-  version "2026.10.26.1105"
+  version "2026.10.28.0521"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "https://github.com/2lab-ai/llmux/releases/download/preview-2026-10-26-1105-b8e490ffdfd3/llmux-macos-aarch64"
-      sha256 "114b5bc68779dc92a37ea69398038bbc57f239bda402e8dd164ecb3dbdc19213"
+      url "https://github.com/2lab-ai/llmux/releases/download/preview-2026-10-28-0521-1734ab000341/llmux-macos-aarch64"
+      sha256 "268b1d78a659fe560a4d1fabdc4192b4f2f42baa946d4f5bb6b2f925548b5d13"
     end
     on_intel do
-      url "https://github.com/2lab-ai/llmux/releases/download/preview-2026-10-26-1105-b8e490ffdfd3/llmux-macos-x86_64"
-      sha256 "e1cf6a85ac6f74507663e77191b0a7c7287610ab4de5536290ecca3959cb5fe8"
+      url "https://github.com/2lab-ai/llmux/releases/download/preview-2026-10-28-0521-1734ab000341/llmux-macos-x86_64"
+      sha256 "3175560b29554ce0d3a59500de41671c16d632e983198cddaa0aa2339827ac3d"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/2lab-ai/llmux/releases/download/preview-2026-10-26-1105-b8e490ffdfd3/llmux-linux-aarch64"
-      sha256 "7dcd0ee6c3620a498174b843b07e5ee3b8dca54ba1e2424bcda2b1a19397162f"
+      url "https://github.com/2lab-ai/llmux/releases/download/preview-2026-10-28-0521-1734ab000341/llmux-linux-aarch64"
+      sha256 "23bec0328ca8f746d3b0be5df4388cc73769978a16ba433dc53cde3feeb671c4"
     end
     on_intel do
-      url "https://github.com/2lab-ai/llmux/releases/download/preview-2026-10-26-1105-b8e490ffdfd3/llmux-linux-x86_64"
-      sha256 "29950dff72e5d984846c2e7406830601234f5ca81842b4639fa5f1bca6405fd0"
+      url "https://github.com/2lab-ai/llmux/releases/download/preview-2026-10-28-0521-1734ab000341/llmux-linux-x86_64"
+      sha256 "1e2d4a483ec713d35041cb86fa444e5140de5dbb7d804bde7fe4878b16f42d75"
     end
   end
 
