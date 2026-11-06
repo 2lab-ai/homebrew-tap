@@ -1,28 +1,28 @@
 class ZwalletPreview < Formula
   desc "Local wallet CLI for AI agents: create, balance, contract calls, transfers"
   homepage "https://github.com/2lab-ai/zwallet"
-  version "2026.11.06.1138"
+  version "2026.11.06.1823"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "https://github.com/2lab-ai/zwallet/releases/download/preview-2026-11-06-1138-36e848324dad/zwallet-macos-aarch64"
-      sha256 "aea1991947e410d7ff8325a2125c0dba081621f235c9d1ab1eaf8873b2d4eaf2"
+      url "https://github.com/2lab-ai/zwallet/releases/download/preview-2026-11-06-1823-1bcb7cd9656d/zwallet-macos-aarch64"
+      sha256 "462f0748f71900c07567ec69c991cb6a3ceed96e61bf0de2dc6520d080b9ef51"
     end
     on_intel do
-      url "https://github.com/2lab-ai/zwallet/releases/download/preview-2026-11-06-1138-36e848324dad/zwallet-macos-x86_64"
-      sha256 "0b024841c374e28a8892ed976e299b30337296d88ee9fc17c5af510f2187c434"
+      url "https://github.com/2lab-ai/zwallet/releases/download/preview-2026-11-06-1823-1bcb7cd9656d/zwallet-macos-x86_64"
+      sha256 "c02dd5d1e35f91ef95b54aac2c70ea798cd58dbaab40e8946d43f52849cea6e1"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/2lab-ai/zwallet/releases/download/preview-2026-11-06-1138-36e848324dad/zwallet-linux-aarch64"
-      sha256 "dc39b9b262ca293bac421c5dc2cc4d266168a1b5420b2c6d5578a9d21ceaf83c"
+      url "https://github.com/2lab-ai/zwallet/releases/download/preview-2026-11-06-1823-1bcb7cd9656d/zwallet-linux-aarch64"
+      sha256 "a751866c3e86e3d2338e7765e4369b3067d50de8e524d9096bd5b29990314ebf"
     end
     on_intel do
-      url "https://github.com/2lab-ai/zwallet/releases/download/preview-2026-11-06-1138-36e848324dad/zwallet-linux-x86_64"
-      sha256 "d30f0c413d9f3ee493118f076d033f823011acee5d12df17bca917cf04ef01f8"
+      url "https://github.com/2lab-ai/zwallet/releases/download/preview-2026-11-06-1823-1bcb7cd9656d/zwallet-linux-x86_64"
+      sha256 "c4295a2664db7879b5334da99b237fb6f52a8d124f1e8a4e7d7de48b7ab88817"
     end
   end
 
