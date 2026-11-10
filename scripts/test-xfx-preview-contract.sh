@@ -1021,8 +1021,9 @@ fi
 log="$work/invocations.log"
 : >"$log"
 make_stub() {
-  # $4: what `--version` prints. Every stub but bin-version prints the
-  # conforming preview line, so each rejection below has one cause.
+  # $4: what `--version` prints. Every stub except the two --version
+  # negatives (bin-version, bin-version-other) prints the conforming preview
+  # line, so each rejection below has one cause.
   local dir="$work/$1" channel="$2" revision="$3" version_line="$4"
   mkdir -p "$dir"
   cat >"$dir/xfx" <<STUB
