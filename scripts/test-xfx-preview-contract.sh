@@ -1021,7 +1021,9 @@ fi
 log="$work/invocations.log"
 : >"$log"
 make_stub() {
-  local dir="$work/$1" channel="$2" revision="$3"
+  # $4: what `--version` prints. Every stub but bin-version prints the
+  # conforming preview line, so each rejection below has one cause.
+  local dir="$work/$1" channel="$2" revision="$3" version_line="$4"
   mkdir -p "$dir"
   cat >"$dir/xfx" <<STUB
 #!/bin/sh
@@ -1031,8 +1033,7 @@ case "\$*" in
     printf '{"version":"0.1.0","build_channel":"$channel","build_revision":"$revision"}\n'
     ;;
   '--version')
-    # The Cargo version is identical on every channel; it cannot prove preview.
-    printf '0.1.0\n'
+    printf '%s\n' '$version_line'
     ;;
   *)
     echo "unexpected xfx invocation: \$*" >&2
@@ -1042,9 +1043,14 @@ esac
 STUB
   chmod 0755 "$dir/xfx"
 }
-make_stub bin-preview preview "$source_sha12"
-make_stub bin-release release "$source_sha12"
-make_stub bin-other preview ffffffffffff
+preview_line="xfx 0.2.0 (preview 2026-08-22-0542-$source_sha12)"
+make_stub bin-preview preview "$source_sha12" "$preview_line"
+make_stub bin-release release "$source_sha12" "$preview_line"
+make_stub bin-other preview ffffffffffff "$preview_line"
+# A build whose status is right but whose `--version` names another build:
+# 0.1.x printed the Cargo version only, and a local build prints `(debug)`.
+make_stub bin-version preview "$source_sha12" "xfx 0.2.0 (debug)"
+make_stub bin-version-other preview "$source_sha12" "xfx 0.2.0 (preview 2026-08-22-0542-ffffffffffff)"
 
 install_dir="$work/install"
 mkdir -p "$install_dir"
@@ -1058,6 +1064,8 @@ XFX_INSTALL_DIR="$install_dir" \
 XFX_BIN_PREVIEW="$work/bin-preview" \
 XFX_BIN_RELEASE="$work/bin-release" \
 XFX_BIN_OTHER="$work/bin-other" \
+XFX_BIN_VERSION="$work/bin-version" \
+XFX_BIN_VERSION_OTHER="$work/bin-version-other" \
 XFX_LOG="$log" \
   ruby - <<'RUBY'
 require "json"
@@ -1249,6 +1257,8 @@ end
 {
   "build_channel" => ENV.fetch("XFX_BIN_RELEASE"),
   "build_revision" => ENV.fetch("XFX_BIN_OTHER"),
+  "--version (not a preview line)" => ENV.fetch("XFX_BIN_VERSION"),
+  "--version (another revision)" => ENV.fetch("XFX_BIN_VERSION_OTHER"),
 }.each do |field, bin_dir|
   rejected = false
   begin
@@ -1262,6 +1272,8 @@ end
 invocations = File.readlines(ENV.fetch("XFX_LOG")).map(&:strip)
 check(invocations.include?("status --json"),
       "formula test never runs `xfx status --json`, so it cannot prove the preview channel")
+check(invocations.include?("--version"),
+      "formula test never runs `xfx --version`, so it cannot prove the build the user sees")
 RUBY
 
 echo "xfx preview tap contract: ok"
