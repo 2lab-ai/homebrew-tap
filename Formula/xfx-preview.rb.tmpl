@@ -38,9 +38,11 @@ class XfxPreview < Formula
   end
 
   test do
-    # `xfx --version` prints the Cargo version (0.1.0) on every channel, so it
-    # cannot prove this is the preview build. `status --json` carries the
-    # compile-time build identity, which is what the preview channel promises.
+    # `xfx --version` names the build: `xfx <version> (preview <id>)`, where
+    # <id> is the release tag's UTC minute and the 12-character revision
+    # (YYYY-MM-DD-HHMM-<sha12>). `status --json` carries the same identity.
+    assert_match(/ \(preview \d{4}-\d{2}-\d{2}-\d{4}-#{SOURCE_REVISION}\)\z/,
+                 shell_output("#{bin}/xfx --version").strip)
     status = JSON.parse(shell_output("#{bin}/xfx status --json"))
     assert_equal "preview", status["build_channel"]
     assert_equal SOURCE_REVISION, status["build_revision"]
