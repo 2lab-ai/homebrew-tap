@@ -1,33 +1,33 @@
 class XfxPreview < Formula
   desc "Rust port of the fx agentic coding CLI (preview channel)"
   homepage "https://github.com/2lab-ai/xfx"
-  version "2026.11.10.122006.42814832116.1"
+  version "2026.11.11.121927.43019311819.1"
   license "Apache-2.0"
 
   # Immutable preview identity, rendered from the exact prerelease:
-  # tag: preview-2026-11-10-122006-42814832116-1-8f9214251710
-  # source: 8f9214251710c13f3083ea564acc7cc17e4d0057
-  SOURCE_REVISION = "8f9214251710".freeze
+  # tag: preview-2026-11-11-121927-43019311819-1-afeaea7cd3e7
+  # source: afeaea7cd3e73d8ceefb5773de36c06cbb96c2e1
+  SOURCE_REVISION = "afeaea7cd3e7".freeze
 
   on_macos do
     on_arm do
-      url "https://github.com/2lab-ai/xfx/releases/download/preview-2026-11-10-122006-42814832116-1-8f9214251710/xfx-macos-aarch64"
-      sha256 "4bfd4897cc794bde290f80126449fb1956047fb5d131e3a352ca7bf2f8412454"
+      url "https://github.com/2lab-ai/xfx/releases/download/preview-2026-11-11-121927-43019311819-1-afeaea7cd3e7/xfx-macos-aarch64"
+      sha256 "9344128d1404115dc862466ef851c2a7ee938076b9ad6d26f1b002b957b1bfbf"
     end
     on_intel do
-      url "https://github.com/2lab-ai/xfx/releases/download/preview-2026-11-10-122006-42814832116-1-8f9214251710/xfx-macos-x86_64"
-      sha256 "bf55be8af68228b5a52af9618c0f49badbef285491183f08d2a8d20f68fe5e84"
+      url "https://github.com/2lab-ai/xfx/releases/download/preview-2026-11-11-121927-43019311819-1-afeaea7cd3e7/xfx-macos-x86_64"
+      sha256 "0b1f8100d97fb22b45f88201038d7c7550c3d464a817e9a6b105d63aaa6a4b03"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/2lab-ai/xfx/releases/download/preview-2026-11-10-122006-42814832116-1-8f9214251710/xfx-linux-aarch64"
-      sha256 "03cc79e839612a7f6f7944b4d69df118c1f2d34a22e32a4f37d17e21413e522a"
+      url "https://github.com/2lab-ai/xfx/releases/download/preview-2026-11-11-121927-43019311819-1-afeaea7cd3e7/xfx-linux-aarch64"
+      sha256 "992bf458b3f773d4fe21d2a710085b3a8a4980468b3e7390975d94d8647bc1bd"
     end
     on_intel do
-      url "https://github.com/2lab-ai/xfx/releases/download/preview-2026-11-10-122006-42814832116-1-8f9214251710/xfx-linux-x86_64"
-      sha256 "18af4386cad647e8366be34fe5bb94a551b1fc10f48f1d79fd8120eb235c9a72"
+      url "https://github.com/2lab-ai/xfx/releases/download/preview-2026-11-11-121927-43019311819-1-afeaea7cd3e7/xfx-linux-x86_64"
+      sha256 "dcd7eac1ee4565bbe7aadda421b3275e17f646f90cb0d1ca31836b56da9ca8c6"
     end
   end
 
@@ -38,9 +38,11 @@ class XfxPreview < Formula
   end
 
   test do
-    # `xfx --version` prints the Cargo version (0.1.0) on every channel, so it
-    # cannot prove this is the preview build. `status --json` carries the
-    # compile-time build identity, which is what the preview channel promises.
+    # `xfx --version` names the build: `xfx <version> (preview <id>)`, where
+    # <id> is the release tag's UTC minute and the 12-character revision
+    # (YYYY-MM-DD-HHMM-<sha12>). `status --json` carries the same identity.
+    assert_match(/ \(preview \d{4}-\d{2}-\d{2}-\d{4}-#{SOURCE_REVISION}\)\z/,
+                 shell_output("#{bin}/xfx --version").strip)
     status = JSON.parse(shell_output("#{bin}/xfx status --json"))
     assert_equal "preview", status["build_channel"]
     assert_equal SOURCE_REVISION, status["build_revision"]
