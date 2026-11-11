@@ -1,28 +1,28 @@
 class Xfx < Formula
   desc "Rust port of the fx agentic coding CLI"
   homepage "https://github.com/2lab-ai/xfx"
-  version "0.1.0"
+  version "0.2.0"
   license "Apache-2.0"
 
   on_macos do
     on_arm do
-      url "https://github.com/2lab-ai/xfx/releases/download/v0.1.0/xfx-aarch64-apple-darwin.tar.gz"
-      sha256 "d6aa600b66451f46398b3525ecc2f290a69e6df895fb14d04c5b16d1960e48b5"
+      url "https://github.com/2lab-ai/xfx/releases/download/v0.2.0/xfx-aarch64-apple-darwin.tar.gz"
+      sha256 "7f21d4b8f56159c7a35e52a66156211284b4111097a7143ccede80721344f41e"
     end
     on_intel do
-      url "https://github.com/2lab-ai/xfx/releases/download/v0.1.0/xfx-x86_64-apple-darwin.tar.gz"
-      sha256 "8811b0181358e5d7aba12dd438f6dc102d1be6ce2f50e4f3f03a9d0467a2d966"
+      url "https://github.com/2lab-ai/xfx/releases/download/v0.2.0/xfx-x86_64-apple-darwin.tar.gz"
+      sha256 "e89818e4e390ebf04893eeb1108781f087171657dc8336e3150a0dd98305a04b"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/2lab-ai/xfx/releases/download/v0.1.0/xfx-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "b13f13f2c1467f2f60d020f6b9fd05504d14172d6b76628040ae40d713fafcd6"
+      url "https://github.com/2lab-ai/xfx/releases/download/v0.2.0/xfx-aarch64-unknown-linux-gnu.tar.gz"
+      sha256 "11d5f75ffdd0fd33528ed610fbe146311ab103748d1136243d406823db175d95"
     end
     on_intel do
-      url "https://github.com/2lab-ai/xfx/releases/download/v0.1.0/xfx-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "afab4a33acba811212a2a8492ac57edc9e0f16d4b551aa49a737beb4a8ab183f"
+      url "https://github.com/2lab-ai/xfx/releases/download/v0.2.0/xfx-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "ffc771f2adbe9961d5b03a52125812e47b22002a30c1d0f597167ebfc727b4a8"
     end
   end
 
