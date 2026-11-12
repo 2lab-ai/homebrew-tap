@@ -1,8 +1,8 @@
 class ReviewOfLegends < Formula
   desc "Self-hosted multi-agent GitHub pull request reviews"
   homepage "https://github.com/2lab-ai/review-of-legends"
-  url "https://github.com/2lab-ai/review-of-legends/releases/download/v1.1.0/review-of-legends-1.1.0.tar.gz"
-  sha256 "3cd73bda204662bb64fd30b5d13c7d30cdac42351b300253bc2f231800891f1d"
+  url "https://github.com/2lab-ai/review-of-legends/releases/download/v1.2.0/review-of-legends-1.2.0.tar.gz"
+  sha256 "a52d6a8ee1d31c5d8e1f5bc77717c3e157b576aeda356778732342593b696c0f"
   license "MIT"
 
   conflicts_with "review-of-legends-preview", because: "both install the rol command"
@@ -40,6 +40,6 @@ class ReviewOfLegends < Formula
 
   test do
     assert_match "Review of Legends", shell_output("#{bin}/rol --help")
-    assert_match "v1.1.0", shell_output("#{bin}/rol version")
+    assert_match "v1.2.0", shell_output("#{bin}/rol version")
   end
 end
