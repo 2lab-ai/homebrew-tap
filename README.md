@@ -24,6 +24,8 @@ open "$(brew --prefix dbotter-preview)/Dbotter Preview.app"
 | `somawork-preview` | Preview-channel runtime tree for somawork. `keg_only` — the controller resolves it by prefix rather than linking it — so it coexists with the production channel. Activate with `somawork setup --profile preview`. |
 | `somawork` | Production-channel runtime tree for somawork, on the same `keg_only` terms. Activate with `somawork setup --profile production`. Preview and production releases are published separately and neither channel can write the other's formula. |
 | `slack-cli` | The official [Slack CLI](https://github.com/slackapi/slack-cli), pinned to one immutable upstream release for macOS Apple Silicon and installed as `slack`. It is here because `somawork setup` logs a workspace in through it and a Homebrew formula cannot depend on a cask; installing `somawork-cli` pulls it in, so the clean journey stays one package install plus `somawork setup`. |
+| `edge-zauth` | [zauthenticator](https://github.com/2lab-ai/zauthenticator), a TOTP authenticator browser extension, for Microsoft Edge. Pinned by hand to one source commit. It only puts the unpacked extension on disk at `$(brew --prefix)/var/edge-zauth/extension`, a fixed path so the extension ID survives `brew upgrade`; you load it once from `edge://extensions` with Developer mode → Load unpacked. |
+| `chrome-zauth` | The same zauthenticator extension for Google Chrome, in its own folder at `$(brew --prefix)/var/chrome-zauth/extension`; load it once from `chrome://extensions` the same way. The Edge and Chrome copies have different extension IDs and separate vaults. |
 
 ```bash
 brew install 2lab-ai/tap/xfx-preview
@@ -38,5 +40,6 @@ Cargo version on every channel, so `xfx status --json` is what actually proves y
 Most formulae are prebuilt installs from GitHub releases; `pdc` and `pdc-preview` build from
 source, because the Palladium compiler needs a C runtime installed alongside it and building
 from the tagged tree is the simplest way to keep the two in step. Dbotter preview updates are dispatched by the matching immutable source release and fail closed unless its tag, source commit, version, manifest URL, and manifest digest all agree. `xfx-preview` is pushed here by the xfx preview
-workflow itself, with the scheduled job as a backstop that never downgrades the formula. Other
+workflow itself, with the scheduled job as a backstop that never downgrades the formula.
+`edge-zauth` and `chrome-zauth` are pinned by hand to one source commit. Other
 formulae remain on the scheduled [`bump.yml`](.github/workflows/bump.yml) update.
