@@ -1,7 +1,7 @@
 class SopenPreview < Formula
   desc "Opens a file or folder on another machine as if it were local (preview channel)"
   homepage "https://github.com/2lab-ai/sopen"
-  version "2026.11.19.1222"
+  version "2026.11.19.1441"
   license "MIT"
 
   # `sopen cut` and the media window run ffmpeg/ffprobe at runtime.
@@ -9,23 +9,23 @@ class SopenPreview < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/2lab-ai/sopen/releases/download/preview-2026-11-19-1222-4b967385aad9/sopen-macos-aarch64"
-      sha256 "fd309ad799e4fb3ab33338ab067a092d1fcb8de5303694e2f285e854b0413a5a"
+      url "https://github.com/2lab-ai/sopen/releases/download/preview-2026-11-19-1441-ab5a0e526b64/sopen-macos-aarch64"
+      sha256 "743815c0147c13a44132134318865743ba5b3995a8b830008e808fb40adc371a"
     end
     on_intel do
-      url "https://github.com/2lab-ai/sopen/releases/download/preview-2026-11-19-1222-4b967385aad9/sopen-macos-x86_64"
-      sha256 "c4ec43deb07038107672c3dd5c41fb69653886755ef1699b4471a4d0200c2468"
+      url "https://github.com/2lab-ai/sopen/releases/download/preview-2026-11-19-1441-ab5a0e526b64/sopen-macos-x86_64"
+      sha256 "5e34af0044d6835d894c53decc4b63fc8468782ec793c1d5e48b2fb83462a9e7"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/2lab-ai/sopen/releases/download/preview-2026-11-19-1222-4b967385aad9/sopen-linux-aarch64"
-      sha256 "3987b3c16a20d3e355d552f99ea8d5ad33af1078e7b390dee654e3c9b9c160a0"
+      url "https://github.com/2lab-ai/sopen/releases/download/preview-2026-11-19-1441-ab5a0e526b64/sopen-linux-aarch64"
+      sha256 "0e3437c83672ad4aa15ee57275ac914a7df6e2c4a13a80af679f3a82efbdf0a6"
     end
     on_intel do
-      url "https://github.com/2lab-ai/sopen/releases/download/preview-2026-11-19-1222-4b967385aad9/sopen-linux-x86_64"
-      sha256 "af7c484519d6ccdbb36df2e7637e2a3f39c0822ca19ca4a1b7f08294ca223046"
+      url "https://github.com/2lab-ai/sopen/releases/download/preview-2026-11-19-1441-ab5a0e526b64/sopen-linux-x86_64"
+      sha256 "51806685723ec43898f9a00e1c4bcbc7d2fadf248e69915de5826e15a5665a7b"
     end
   end
 
