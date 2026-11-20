@@ -1,9 +1,9 @@
 class EdgeZauth < Formula
   desc "TOTP authenticator browser extension (zauthenticator) for Microsoft Edge"
   homepage "https://github.com/2lab-ai/zauthenticator"
-  url "https://github.com/2lab-ai/zauthenticator/archive/98b3c46a55f4af0a34ebf67bcdc3909aee0a9fbd.tar.gz"
-  version "0.3.0-pre.20261118.0956"
-  sha256 "66ae705221debc52969635a55abc25616d4541007364b372e93aeb608ba4b584"
+  url "https://github.com/2lab-ai/zauthenticator/archive/98e080f04e9c8eddbd399447f268bfd93b29669f.tar.gz"
+  version "0.3.0"
+  sha256 "95ce52c088c164753fc603b64095dbecb851950e4bc1ef845661e4c8c0892a5b"
   license "MIT"
 
   # Delivers files only: Edge offers no way to register an off-store
