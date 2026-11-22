@@ -1,7 +1,7 @@
 class SopenPreview < Formula
   desc "Opens a file or folder on another machine as if it were local (preview channel)"
   homepage "https://github.com/2lab-ai/sopen"
-  version "2026.11.22.0053"
+  version "2026.11.22.0331"
   license "MIT"
 
   # `sopen cut` and the media window run ffmpeg/ffprobe at runtime.
@@ -18,29 +18,29 @@ class SopenPreview < Formula
   # The licences of what the binary links statically (sherpa-onnx, ONNX Runtime, …) and of the
   # model, installed with it.
   resource "third-party-notices" do
-    url "https://github.com/2lab-ai/sopen/releases/download/preview-2026-11-22-0053-54d921fd2b26/THIRD-PARTY-NOTICES"
+    url "https://github.com/2lab-ai/sopen/releases/download/preview-2026-11-22-0331-623c6f91ef92/THIRD-PARTY-NOTICES"
     sha256 "84512eb4b650ea41d9e997d265202a475a2cc40b3f9a401d1776fb62ef87e119"
   end
 
   on_macos do
     on_arm do
-      url "https://github.com/2lab-ai/sopen/releases/download/preview-2026-11-22-0053-54d921fd2b26/sopen-macos-aarch64"
-      sha256 "788a8bcda5bc9fcff0704fcc5957ddbbc7d4ea6ce45f799214941bb1624a3f94"
+      url "https://github.com/2lab-ai/sopen/releases/download/preview-2026-11-22-0331-623c6f91ef92/sopen-macos-aarch64"
+      sha256 "9ab1e06057027bbba7c2b9bafd2ba1ee5efc5861c986bbfa533d2fede86ea19e"
     end
     on_intel do
-      url "https://github.com/2lab-ai/sopen/releases/download/preview-2026-11-22-0053-54d921fd2b26/sopen-macos-x86_64"
-      sha256 "d2162ed5559716160382240440ded78706ff1d642487bf0772888dde303c4317"
+      url "https://github.com/2lab-ai/sopen/releases/download/preview-2026-11-22-0331-623c6f91ef92/sopen-macos-x86_64"
+      sha256 "e5b9f2bc5c379147afa2dda8986d1ff4f6ebee28b3c6c1b13e7c4e0e6786ae91"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/2lab-ai/sopen/releases/download/preview-2026-11-22-0053-54d921fd2b26/sopen-linux-aarch64"
-      sha256 "c55b72dd9e129b12abbecfdbe827bcc10a0cc97958ca396c6fee37dd9968ad38"
+      url "https://github.com/2lab-ai/sopen/releases/download/preview-2026-11-22-0331-623c6f91ef92/sopen-linux-aarch64"
+      sha256 "ea99b6c6d8b4cfeca3f183663080e1d388e589addad0a2e06c80efa3e28954a7"
     end
     on_intel do
-      url "https://github.com/2lab-ai/sopen/releases/download/preview-2026-11-22-0053-54d921fd2b26/sopen-linux-x86_64"
-      sha256 "cbb1c17e7d3e798e897bbd530cad6318fda1734e98c81a3f107b868387509b25"
+      url "https://github.com/2lab-ai/sopen/releases/download/preview-2026-11-22-0331-623c6f91ef92/sopen-linux-x86_64"
+      sha256 "f44e079efa95b45e58411ef82d978a092a233e195c4fc452bdb6277e7c5ab32e"
     end
   end
 
