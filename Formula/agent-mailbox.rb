@@ -2,7 +2,7 @@ class AgentMailbox < Formula
   desc "Mail server, CLI and MCP endpoint for AI agents, with invites and federation"
   homepage "https://github.com/2lab-ai/homebrew-tap/releases/tag/agent-mailbox-v0.3.0"
   version "0.3.0"
-  license :cannot_represent
+  license "MIT"
 
   on_macos do
     on_arm do
