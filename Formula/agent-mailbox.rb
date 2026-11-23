@@ -7,22 +7,22 @@ class AgentMailbox < Formula
   on_macos do
     on_arm do
       url "https://github.com/2lab-ai/homebrew-tap/releases/download/agent-mailbox-v0.3.0/mailbox-macos-aarch64"
-      sha256 "6f640e1e94b387e962d80fc624a7e9ee3f0ca7057c42583d1eaf4e5630ef5a68"
+      sha256 "53bee73eb82359d644c7e19022309ef5f506141b70802b51a9ac5025a708fffa"
     end
     on_intel do
       url "https://github.com/2lab-ai/homebrew-tap/releases/download/agent-mailbox-v0.3.0/mailbox-macos-x86_64"
-      sha256 "7680d35f10240cf921505f726111afae8d5f3065dbf7f132c49fe1c3d8c8fb70"
+      sha256 "42f97b62b0180825ddb74c1cf3face436f04cb6c1d9a014cf4e01d59d437f4d4"
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/2lab-ai/homebrew-tap/releases/download/agent-mailbox-v0.3.0/mailbox-linux-aarch64"
-      sha256 "917d30e6682f2d7b4ce842615e1171f7b67a7e43330b5cec51e8c15d3ebff756"
+      sha256 "adb7fd67f3febbd4de544fcbc2802acaa15e2c1e54d640ecce0e78190099fc4a"
     end
     on_intel do
       url "https://github.com/2lab-ai/homebrew-tap/releases/download/agent-mailbox-v0.3.0/mailbox-linux-x86_64"
-      sha256 "6fb76a36ce554d3ae6ad33aab649fbf3dcc7a5e7084c7c07ee7d60d580fd9e23"
+      sha256 "438aa906941f0ea8c6f30f58f91dc586881d2b9683d9d6d77e9a02edfc683048"
     end
   end
 
