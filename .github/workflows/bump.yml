@@ -622,6 +622,118 @@ jobs:
           git pull --rebase
           git push
 
+  bump-open-au05:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render open-au05 formula from the latest stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=$(gh release view --repo 2lab-ai/open-au05 --json tagName -q .tagName 2>/dev/null || true)
+          if [ -z "$TAG" ]; then
+            echo "no stable release yet; skipping open-au05 formula"
+            exit 0
+          fi
+          VERSION="${TAG#v}"
+          CURRENT=$(sed -n 's/^  version "\(.*\)"$/\1/p' Formula/open-au05.rb 2>/dev/null || true)
+          if [ "${CURRENT:-}" = "$VERSION" ]; then
+            echo "formula already at $VERSION"
+            exit 0
+          fi
+
+          declare -A SHAS
+          for asset in open-au05-macos-aarch64 open-au05-macos-x86_64 open-au05-linux-aarch64 open-au05-linux-x86_64; do
+            gh release download "$TAG" --repo 2lab-ai/open-au05 --pattern "$asset" --output "/tmp/$asset" --clobber
+            SHAS[$asset]=$(sha256sum "/tmp/$asset" | cut -d' ' -f1)
+          done
+
+          sed -e "s/@VERSION@/$VERSION/g" \
+              -e "s/@SHA_MACOS_AARCH64@/${SHAS[open-au05-macos-aarch64]}/" \
+              -e "s/@SHA_MACOS_X86_64@/${SHAS[open-au05-macos-x86_64]}/" \
+              -e "s/@SHA_LINUX_AARCH64@/${SHAS[open-au05-linux-aarch64]}/" \
+              -e "s/@SHA_LINUX_X86_64@/${SHAS[open-au05-linux-x86_64]}/" \
+              Formula/open-au05.rb.tmpl > Formula/open-au05.rb
+
+          ruby -c Formula/open-au05.rb
+
+      - name: Commit bump
+        run: |
+          set -euo pipefail
+          [ -f Formula/open-au05.rb ] || { echo "no stable formula; nothing to commit"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/open-au05.rb
+          git diff --cached --quiet && { echo "nothing to commit"; exit 0; }
+          VERSION=$(sed -n 's/^  version "\(.*\)"$/\1/p' Formula/open-au05.rb)
+          git commit -m "open-au05 $VERSION"
+          git pull --rebase
+          git push
+
+  bump-open-au05-preview:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    needs: bump-open-au05
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Render open-au05-preview formula from the latest prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=$(gh release list --repo 2lab-ai/open-au05 --limit 100 \
+            --json tagName,isPrerelease,createdAt \
+            --jq '[.[] | select(.isPrerelease and (.tagName | startswith("preview-")))] | sort_by(.createdAt) | last | .tagName // empty')
+          if [ -z "$TAG" ]; then
+            echo "no preview prerelease yet"
+            exit 0
+          fi
+          CURRENT=$(sed -n 's|^.*releases/download/\(preview-[^/]*\)/.*$|\1|p' Formula/open-au05-preview.rb 2>/dev/null | head -1 || true)
+          if [ "${CURRENT:-}" = "$TAG" ]; then
+            echo "preview formula already at $TAG"
+            exit 0
+          fi
+          if [[ "$TAG" =~ ^preview-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{4})-[0-9a-f]+$ ]]; then
+            VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.${BASH_REMATCH[4]}"
+          else
+            CREATED=$(gh release view "$TAG" --repo 2lab-ai/open-au05 --json createdAt -q .createdAt)
+            VERSION=$(date -u -d "$CREATED" +%Y.%m.%d.%H%M)
+          fi
+
+          declare -A SHAS
+          for asset in open-au05-macos-aarch64 open-au05-macos-x86_64 open-au05-linux-aarch64 open-au05-linux-x86_64; do
+            gh release download "$TAG" --repo 2lab-ai/open-au05 --pattern "$asset" --output "/tmp/$asset" --clobber
+            SHAS[$asset]=$(sha256sum "/tmp/$asset" | cut -d' ' -f1)
+          done
+
+          sed -e "s/@VERSION@/$VERSION/g" \
+              -e "s/@TAG@/$TAG/g" \
+              -e "s/@SHA_MACOS_AARCH64@/${SHAS[open-au05-macos-aarch64]}/" \
+              -e "s/@SHA_MACOS_X86_64@/${SHAS[open-au05-macos-x86_64]}/" \
+              -e "s/@SHA_LINUX_AARCH64@/${SHAS[open-au05-linux-aarch64]}/" \
+              -e "s/@SHA_LINUX_X86_64@/${SHAS[open-au05-linux-x86_64]}/" \
+              Formula/open-au05-preview.rb.tmpl > Formula/open-au05-preview.rb
+
+          ruby -c Formula/open-au05-preview.rb
+
+      - name: Commit preview bump
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/open-au05-preview.rb 2>/dev/null || true
+          git diff --cached --quiet && { echo "nothing to commit"; exit 0; }
+          TAG=$(sed -n 's|^.*releases/download/\(preview-[^/]*\)/.*$|\1|p' Formula/open-au05-preview.rb | head -1)
+          git commit -m "open-au05-preview $TAG"
+          git pull --rebase
+          git push
+
   bump-dbotter:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
@@ -1403,3 +1515,4 @@ jobs:
 # registered: dbotter formula auto-bump (preview; stable added when a v* release exists)
 # registered: xfx-preview formula auto-bump (scheduled backstop; the xfx preview
 #             workflow pushes the formula directly for immediate propagation)
+# registered: open-au05 formula auto-bump (preview; stable added when a v* release exists)

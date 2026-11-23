@@ -1,0 +1,47 @@
+class OpenAu05 < Formula
+  desc "Open-source Linux driver, daemon, voice dictation, LED controller, and TUI for Ulanzi Vibe Key AU05"
+  homepage "https://github.com/2lab-ai/open-au05"
+  version "@VERSION@"
+  license "MIT"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/2lab-ai/open-au05/releases/download/v@VERSION@/open-au05-macos-aarch64"
+      sha256 "@SHA_MACOS_AARCH64@"
+    end
+    on_intel do
+      url "https://github.com/2lab-ai/open-au05/releases/download/v@VERSION@/open-au05-macos-x86_64"
+      sha256 "@SHA_MACOS_X86_64@"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/2lab-ai/open-au05/releases/download/v@VERSION@/open-au05-linux-aarch64"
+      sha256 "@SHA_LINUX_AARCH64@"
+    end
+    on_intel do
+      url "https://github.com/2lab-ai/open-au05/releases/download/v@VERSION@/open-au05-linux-x86_64"
+      sha256 "@SHA_LINUX_X86_64@"
+    end
+  end
+
+  link_overwrite "bin/open-au05"
+
+  def install
+    bin.install Dir["open-au05-*"].first => "open-au05"
+  end
+
+  def caveats
+    <<~EOS
+      On Linux, grant non-root access to the AU05 vendor HID interface & /dev/uinput:
+        sudo #{opt_bin}/open-au05 setup udev --install
+      Then unplug and replug the AU05 USB receiver and verify with:
+        open-au05 doctor
+    EOS
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/open-au05 --version")
+  end
+end
